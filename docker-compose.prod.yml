@@ -1,0 +1,146 @@
+# UGC Outreach — Production
+# Runs on port 8080, independent of ContentForge
+
+# Cap container log files so they cannot grow unbounded
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  ugc-postgres:
+    logging: *default-logging
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ugc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ugc_prod_pass}
+      POSTGRES_DB: ugc_db
+    volumes:
+      - ugc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ugc -d ugc_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ugc_net
+
+  ugc-redis:
+    logging: *default-logging
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - ugc_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ugc_net
+
+  ugc-backend:
+    logging: *default-logging
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ugc:${POSTGRES_PASSWORD:-ugc_prod_pass}@ugc-postgres:5432/ugc_db
+      DATABASE_URL_SYNC: postgresql://ugc:${POSTGRES_PASSWORD:-ugc_prod_pass}@ugc-postgres:5432/ugc_db
+      REDIS_URL: redis://ugc-redis:6379/0
+      FRONTEND_URL: http://${SERVER_IP:-149.104.69.36}:8080
+      BASE_URL: http://${SERVER_IP:-149.104.69.36}:8080
+    volumes:
+      - ugc_uploads:/app/uploads
+    depends_on:
+      ugc-postgres:
+        condition: service_healthy
+      ugc-redis:
+        condition: service_healthy
+    networks:
+      - ugc_net
+
+  ugc-celery-worker:
+    logging: *default-logging
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ugc:${POSTGRES_PASSWORD:-ugc_prod_pass}@ugc-postgres:5432/ugc_db
+      DATABASE_URL_SYNC: postgresql://ugc:${POSTGRES_PASSWORD:-ugc_prod_pass}@ugc-postgres:5432/ugc_db
+      REDIS_URL: redis://ugc-redis:6379/0
+    volumes:
+      - ugc_uploads:/app/uploads
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+    depends_on:
+      ugc-postgres:
+        condition: service_healthy
+      ugc-redis:
+        condition: service_healthy
+    networks:
+      - ugc_net
+
+  ugc-celery-beat:
+    logging: *default-logging
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ugc:${POSTGRES_PASSWORD:-ugc_prod_pass}@ugc-postgres:5432/ugc_db
+      DATABASE_URL_SYNC: postgresql://ugc:${POSTGRES_PASSWORD:-ugc_prod_pass}@ugc-postgres:5432/ugc_db
+      REDIS_URL: redis://ugc-redis:6379/0
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    depends_on:
+      ugc-postgres:
+        condition: service_healthy
+      ugc-redis:
+        condition: service_healthy
+    networks:
+      - ugc_net
+
+  ugc-frontend:
+    logging: *default-logging
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: http://${SERVER_IP:-149.104.69.36}:8080
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - ugc-backend
+    networks:
+      - ugc_net
+
+  ugc-nginx:
+    logging: *default-logging
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - ugc-backend
+      - ugc-frontend
+    networks:
+      - ugc_net
+
+volumes:
+  ugc_pgdata:
+  ugc_redisdata:
+  ugc_uploads:
+
+networks:
+  ugc_net:
+    driver: bridge
