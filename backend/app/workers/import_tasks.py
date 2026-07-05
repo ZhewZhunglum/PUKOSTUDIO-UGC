@@ -1,7 +1,9 @@
 import csv
 import io
 import logging
+import uuid
 
+from app.core.utils import get_sync_session
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -10,30 +12,18 @@ logger = logging.getLogger(__name__)
 @celery_app.task(name="app.workers.import_tasks.process_csv_import")
 def process_csv_import(team_id: str, csv_content: str):
     """Process a CSV import asynchronously for large files."""
-    import uuid
-
+    from app.models.influencer import Influencer, InfluencerPlatform, Platform
 
     reader = csv.DictReader(io.StringIO(csv_content))
     rows = list(reader)
 
-    # For large imports, process in chunks
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    db = get_sync_session()
 
-    from app.config import settings
-
-    engine = create_engine(settings.database_url_sync)
-    SessionLocal = sessionmaker(bind=engine)
-    db = SessionLocal()
+    imported = 0
+    skipped = 0
+    errors = []
 
     try:
-        # Use sync import for Celery
-        from app.models.influencer import Influencer, InfluencerPlatform, Platform
-
-        imported = 0
-        skipped = 0
-        errors = []
-
         for i, row in enumerate(rows):
             try:
                 name = row.get("name", "").strip()
@@ -53,41 +43,45 @@ def process_csv_import(team_id: str, csv_content: str):
                         skipped += 1
                         continue
 
-                influencer = Influencer(
-                    team_id=uuid.UUID(team_id),
-                    name=name,
-                    email=email,
-                    niche=row.get("niche", "").strip() or None,
-                    country=row.get("country", "US").strip() or "US",
-                    source="csv_import",
-                )
-                db.add(influencer)
-                db.flush()
-
-                platform_name = row.get("platform", "").strip().lower()
-                username = row.get("username", "").strip()
-                if platform_name and username and platform_name in ("tiktok", "instagram", "youtube"):
-                    followers_str = row.get("followers", "")
-                    followers = int(followers_str) if followers_str and str(followers_str).isdigit() else None
-                    platform = InfluencerPlatform(
+                # Persist each row inside its own SAVEPOINT so a single bad row
+                # only rolls back that row, not the up-to-99 rows already staged
+                # since the last commit.
+                with db.begin_nested():
+                    influencer = Influencer(
                         team_id=uuid.UUID(team_id),
-                        influencer_id=influencer.id,
-                        platform=Platform(platform_name),
-                        username=username,
-                        followers=followers,
+                        name=name,
+                        email=email,
+                        niche=row.get("niche", "").strip() or None,
+                        country=row.get("country", "US").strip() or "US",
+                        source="csv_import",
                     )
-                    db.add(platform)
+                    db.add(influencer)
+                    db.flush()
+
+                    platform_name = row.get("platform", "").strip().lower()
+                    username = row.get("username", "").strip()
+                    if platform_name and username and platform_name in ("tiktok", "instagram", "youtube"):
+                        followers_str = row.get("followers", "")
+                        followers = int(followers_str) if followers_str and str(followers_str).isdigit() else None
+                        platform = InfluencerPlatform(
+                            team_id=uuid.UUID(team_id),
+                            influencer_id=influencer.id,
+                            platform=Platform(platform_name),
+                            username=username,
+                            followers=followers,
+                        )
+                        db.add(platform)
 
                 imported += 1
 
-                # Commit every 100 rows
+                # Periodically release savepoints and persist progress.
                 if imported % 100 == 0:
                     db.commit()
 
             except Exception as e:
+                # Only this row's savepoint was rolled back; staged rows survive.
                 errors.append(f"Row {i + 1}: {str(e)}")
                 skipped += 1
-                db.rollback()
 
         db.commit()
         logger.info(

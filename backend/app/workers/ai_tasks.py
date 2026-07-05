@@ -2,11 +2,24 @@ import asyncio
 import logging
 import uuid
 
-from app.core.database import async_session
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app.config import settings
 from app.services import ai_communication_service
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+# Each Celery task runs its coroutine via asyncio.run(), which creates a fresh
+# event loop every time. asyncpg connections are bound to the loop that opened
+# them, so a pooled connection reused on a later loop raises "attached to a
+# different loop". NullPool opens and closes a connection per session, keeping
+# nothing across loops, so this module-level engine is safe for the worker.
+_worker_engine = create_async_engine(settings.database_url, poolclass=NullPool)
+async_session = async_sessionmaker(
+    _worker_engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
 async def _run_classification(conversation_id: str) -> dict:

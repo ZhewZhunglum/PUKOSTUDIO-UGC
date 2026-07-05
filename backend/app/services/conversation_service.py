@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from email.utils import getaddresses
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
@@ -385,7 +385,12 @@ async def send_reply(
     message.sent_at = datetime.now(timezone.utc)
     for attachment in attachment_rows:
         attachment.email_message_id = message.id
-    account.sent_today += 1
+    # Atomic increment to avoid lost updates under concurrent sends.
+    await db.execute(
+        update(EmailAccount)
+        .where(EmailAccount.id == account.id)
+        .values(sent_today=EmailAccount.sent_today + 1)
+    )
     conversation.unread_count = 0
     conversation.needs_review = False
     await db.flush()

@@ -52,38 +52,23 @@ PLAYBOOK_FIELDS = [
 ]
 
 
+# Playbook fields that are booleans (default False) rather than nullable text.
+_PLAYBOOK_BOOL_FIELDS = {"enabled", "contract_required"}
+
+
 def empty_playbook_response(campaign_id: uuid.UUID) -> dict:
+    """Placeholder payload when a campaign has no playbook yet.
+
+    Derived from PLAYBOOK_FIELDS so adding a field in one place cannot drift
+    from the other.
+    """
     return {
         "id": None,
         "campaign_id": campaign_id,
-        "enabled": False,
-        "product_name": None,
-        "product_description": None,
-        "offer_summary": None,
-        "deliverables": None,
-        "sample_policy": None,
-        "pricing_rules": None,
-        "negotiation_limits": None,
-        "prohibited_claims": None,
-        "tone": None,
-        "language": None,
-        "signature": None,
-        "reply_guidelines": None,
-        "campaign_objectives": None,
-        "target_audience": None,
-        "key_messages": None,
-        "content_dos": None,
-        "content_donts": None,
-        "required_hashtags": None,
-        "disclosure_requirements": None,
-        "payment_terms": None,
-        "usage_rights": None,
-        "approval_process": None,
-        "contract_required": False,
-        "content_review_checklist": None,
-        "posting_guidance": None,
-        "performance_kpis": None,
-        "competitor_notes": None,
+        **{
+            field: (False if field in _PLAYBOOK_BOOL_FIELDS else None)
+            for field in PLAYBOOK_FIELDS
+        },
         "created_at": None,
         "updated_at": None,
     }

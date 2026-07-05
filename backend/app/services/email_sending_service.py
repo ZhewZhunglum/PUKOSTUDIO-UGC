@@ -13,6 +13,36 @@ from app.models.email_message import (
     EmailStatus,
 )
 
+# Forward progression of a healthy delivery lifecycle. Higher rank = later stage.
+_STATUS_RANK = {
+    EmailStatus.queued: 0,
+    EmailStatus.sending: 1,
+    EmailStatus.sent: 2,
+    EmailStatus.delivered: 3,
+    EmailStatus.opened: 4,
+    EmailStatus.clicked: 5,
+}
+# Terminal negative outcomes; these always take precedence over progression.
+_TERMINAL_NEGATIVE = {EmailStatus.bounced, EmailStatus.complained, EmailStatus.failed}
+
+
+def _should_apply_status(current: EmailStatus, new: EmailStatus) -> bool:
+    """Decide whether an incoming webhook event should overwrite the status.
+
+    Provider events can arrive out of order (a late "delivered" after "opened",
+    or a duplicate). Without this guard, ``msg.status = status`` would silently
+    downgrade an already opened/clicked message. Rules:
+    - A terminal negative (bounced/complained/failed) always applies, unless the
+      message is already in a terminal negative state.
+    - Once terminal negative, positive progression events are ignored.
+    - Otherwise only move forward along the lifecycle.
+    """
+    if new in _TERMINAL_NEGATIVE:
+        return current not in _TERMINAL_NEGATIVE
+    if current in _TERMINAL_NEGATIVE:
+        return False
+    return _STATUS_RANK.get(new, -1) > _STATUS_RANK.get(current, -1)
+
 
 async def create_outbound_message(
     db: AsyncSession,
@@ -69,15 +99,19 @@ async def update_message_status(
     if not msg:
         return None
 
-    msg.status = status
     now = datetime.now(timezone.utc)
 
+    # Record event timestamps regardless of arrival order (idempotent).
     if status == EmailStatus.sent:
-        msg.sent_at = now
+        msg.sent_at = msg.sent_at or now
     elif status == EmailStatus.opened:
         msg.opened_at = msg.opened_at or now
     elif status == EmailStatus.clicked:
         msg.clicked_at = msg.clicked_at or now
+
+    # Only advance status forward so an out-of-order event can't downgrade it.
+    if _should_apply_status(msg.status, status):
+        msg.status = status
 
     # Record event
     if event_type:

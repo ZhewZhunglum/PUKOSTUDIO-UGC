@@ -241,8 +241,14 @@ def send_single_email(
         message.message_id = message_id
         message.sent_at = datetime.now(timezone.utc)
 
-        # Update account counter
-        account.sent_today += 1
+        # Atomically bump the daily counter so concurrent sends can't clobber
+        # each other's increment (a read-modify-write on account.sent_today
+        # loses updates and lets the daily limit be exceeded).
+        db.execute(
+            update(EmailAccount)
+            .where(EmailAccount.id == account.id)
+            .values(sent_today=EmailAccount.sent_today + 1)
+        )
 
         # Update campaign influencer
         ci.current_step = step.step_order
