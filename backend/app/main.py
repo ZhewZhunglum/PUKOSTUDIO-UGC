@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,10 +8,33 @@ from sqlalchemy import text
 from app.api.v1.router import api_router
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
+_DEFAULT_SECRET_KEY = "change-me-to-a-random-string-in-production"
+
+
+def _validate_runtime_config() -> None:
+    """Fail fast on insecure production config.
+
+    A default SECRET_KEY lets anyone forge JWTs (and thus impersonate any team),
+    so refuse to boot with it outside development. In development we only warn.
+    """
+    if settings.secret_key == _DEFAULT_SECRET_KEY:
+        if settings.app_env == "development":
+            logger.warning(
+                "SECRET_KEY is the built-in default; set a strong SECRET_KEY before deploying."
+            )
+        else:
+            raise RuntimeError(
+                "SECRET_KEY is still the built-in default in a non-development "
+                "environment. Set a strong, random SECRET_KEY before starting."
+            )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    _validate_runtime_config()
     yield
     # Shutdown
     from app.core.database import engine

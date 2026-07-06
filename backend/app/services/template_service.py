@@ -123,6 +123,39 @@ def extract_variables(text: str) -> list[str]:
     return list(set(re.findall(r"\{\{(\w+)\}\}", text)))
 
 
+def build_influencer_variables(influencer, fallback_name: str | None = None) -> dict:
+    """Assemble the template variable map for an outbound email.
+
+    Covers every placeholder the product documents ({{name}}, {{first_name}},
+    {{email}}, {{niche}}, {{country}}, {{platform}}, {{username}}, {{followers}}).
+    ``influencer`` may be None (falls back to ``fallback_name``); platform-derived
+    values come from the influencer's first linked platform when present.
+    """
+    name = (getattr(influencer, "name", None) or fallback_name or "").strip()
+    first_name = name.split()[0] if name else ""
+
+    platforms = getattr(influencer, "platforms", None) or []
+    first_platform = platforms[0] if platforms else None
+
+    def _platform_field(attr: str) -> str:
+        value = getattr(first_platform, attr, None) if first_platform else None
+        if value is None:
+            return ""
+        # Platform enum -> its string value; everything else -> str()
+        return str(getattr(value, "value", value))
+
+    return {
+        "name": name,
+        "first_name": first_name,
+        "email": getattr(influencer, "email", None) or "",
+        "niche": getattr(influencer, "niche", None) or "",
+        "country": getattr(influencer, "country", None) or "",
+        "platform": _platform_field("platform"),
+        "username": _platform_field("username"),
+        "followers": _platform_field("followers"),
+    }
+
+
 def render_template(subject: str, body_html: str, variables: dict) -> tuple[str, str]:
     """Replace {{variable}} placeholders with actual values."""
     rendered_subject = subject

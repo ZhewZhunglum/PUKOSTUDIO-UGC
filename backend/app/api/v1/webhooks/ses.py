@@ -51,7 +51,12 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                         event_type=event_type,
                         raw_data=message,
                     )
-        except Exception as e:
-            logger.error(f"Error processing SES webhook: {e}")
+        except Exception:
+            # Re-raise so get_db rolls back and SNS gets a non-2xx and redelivers.
+            # Swallowing here (returning 200) permanently drops the event and
+            # silently corrupts delivery/open/bounce metrics. update_message_status
+            # is idempotent, so redelivery is safe.
+            logger.exception("Error processing SES webhook")
+            raise
 
     return {"status": "ok"}

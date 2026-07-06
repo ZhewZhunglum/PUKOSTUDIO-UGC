@@ -133,8 +133,9 @@ def send_single_email(
     from app.models.campaign import CampaignInfluencer, CampaignInfluencerStatus, CampaignStep
     from app.models.email_account import EmailAccount
     from app.models.email_message import EmailDirection, EmailMessage, EmailStatus
+    from app.models.influencer import Influencer
     from app.models.template import EmailTemplate
-    from app.services.template_service import render_template
+    from app.services.template_service import build_influencer_variables, render_template
 
     db = get_sync_session()
     try:
@@ -187,11 +188,13 @@ def send_single_email(
             db.commit()
             return
 
-        # Render template
-        variables = {
-            "name": influencer_name,
-            "first_name": influencer_name.split()[0] if influencer_name and influencer_name.strip() else "",
-        }
+        # Render template. Load the full influencer so template variables like
+        # {{email}}, {{niche}}, {{platform}}, {{username}}, {{followers}} resolve;
+        # otherwise those placeholders would ship verbatim to the recipient.
+        influencer = db.execute(
+            select(Influencer).where(Influencer.id == uuid.UUID(influencer_id))
+        ).scalar_one_or_none()
+        variables = build_influencer_variables(influencer, fallback_name=influencer_name)
         rendered_subject, rendered_body = render_template(
             template.subject, template.body_html, variables
         )
@@ -260,14 +263,8 @@ def send_single_email(
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {e}")
         db.rollback()
-        ci = db.execute(
-            select(CampaignInfluencer).where(
-                CampaignInfluencer.id == uuid.UUID(campaign_influencer_id)
-            )
-        ).scalar_one_or_none()
-        if ci:
-            ci.status = CampaignInfluencerStatus.bounced
 
+        # Record the failure on the most recent message for this send attempt.
         failed_message = db.execute(
             select(EmailMessage)
             .where(
@@ -283,6 +280,21 @@ def send_single_email(
                 "failure_reason": str(e),
             }
         db.commit()
+
+        # A transient failure (SMTP timeout, provider 5xx / rate limit) should be
+        # retried rather than permanently bouncing the influencer. Only give up —
+        # and mark the enrollment bounced — once all retries are exhausted.
+        try:
+            raise self.retry(exc=e)
+        except self.MaxRetriesExceededError:
+            ci = db.execute(
+                select(CampaignInfluencer).where(
+                    CampaignInfluencer.id == uuid.UUID(campaign_influencer_id)
+                )
+            ).scalar_one_or_none()
+            if ci:
+                ci.status = CampaignInfluencerStatus.bounced
+            db.commit()
     finally:
         db.close()
 
