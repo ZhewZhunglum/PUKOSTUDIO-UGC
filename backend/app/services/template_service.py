@@ -92,6 +92,59 @@ async def update_template(
     return template
 
 
+_VALID_TEMPLATE_CATEGORIES = {c.value for c in TemplateCategory}
+
+# Column order used for both import parsing and export generation.
+TEMPLATE_EXPORT_COLUMNS = ["name", "subject", "body_html", "body_text", "category", "language"]
+
+
+async def import_templates_from_rows(
+    db: AsyncSession, team_id: uuid.UUID, rows: list[dict]
+) -> dict:
+    """Create templates from parsed spreadsheet rows.
+
+    Requires name/subject/body_html per row; unknown categories fall back to
+    'custom'. Each row runs in its own SAVEPOINT so a single bad row is skipped
+    without discarding the rows already staged.
+    """
+    imported = 0
+    skipped = 0
+    for row in rows:
+        name = (row.get("name") or "").strip()
+        subject = (row.get("subject") or "").strip()
+        body_html = (row.get("body_html") or "").strip()
+        if not name or not subject or not body_html:
+            skipped += 1
+            continue
+
+        category = (row.get("category") or "").strip() or "initial_outreach"
+        if category not in _VALID_TEMPLATE_CATEGORIES:
+            category = "custom"
+        language = (row.get("language") or "").strip() or "en"
+        body_text = (row.get("body_text") or "").strip() or None
+
+        try:
+            async with db.begin_nested():
+                await create_template(
+                    db,
+                    team_id,
+                    TemplateCreate(
+                        name=name,
+                        subject=subject,
+                        body_html=body_html,
+                        body_text=body_text,
+                        category=category,
+                        language=language,
+                    ),
+                )
+            imported += 1
+        except Exception:
+            skipped += 1
+
+    await db.flush()
+    return {"imported": imported, "skipped": skipped}
+
+
 async def clone_template(
     db: AsyncSession, template_id: uuid.UUID, team_id: uuid.UUID
 ) -> EmailTemplate:

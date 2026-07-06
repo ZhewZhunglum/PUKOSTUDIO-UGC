@@ -1,10 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.tabular import normalize_format, parse_tabular, tabular_response
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.template import (
@@ -38,6 +39,48 @@ async def list_templates(
     db: AsyncSession = Depends(get_db),
 ):
     return await template_service.list_templates(db, current_user.team_id)
+
+
+@router.get("/export")
+async def export_templates(
+    format: str = Query("csv"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    fmt = normalize_format(format)
+    templates = await template_service.list_templates(db, current_user.team_id)
+    columns = template_service.TEMPLATE_EXPORT_COLUMNS
+    rows = [
+        [
+            t.name,
+            t.subject,
+            t.body_html,
+            t.body_text or "",
+            t.category.value if t.category else "",
+            t.language or "",
+        ]
+        for t in templates
+    ]
+    return tabular_response(
+        fmt=fmt,
+        filename_stem="templates",
+        headers=columns,
+        rows=rows,
+        sheet_title="Templates",
+    )
+
+
+@router.post("/import")
+async def import_templates(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    content = await file.read()
+    rows = parse_tabular(file.filename, content)
+    return await template_service.import_templates_from_rows(
+        db, current_user.team_id, rows
+    )
 
 
 @router.get("/library", response_model=list[TemplateResponse])
