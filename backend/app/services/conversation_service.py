@@ -308,6 +308,11 @@ async def send_reply(
         account = account_result.scalar_one_or_none()
         if not account:
             raise NotFoundException("Email account not found")
+        # Explicit account selection bypasses select_best_account, so enforce the
+        # daily send limit here too — otherwise a chosen account can exceed the
+        # provider cap and get throttled/suspended.
+        if account.sent_today >= account.daily_limit:
+            raise BadRequestException("Selected sending account has reached its daily limit")
     else:
         accounts_result = await db.execute(
             select(EmailAccount).where(

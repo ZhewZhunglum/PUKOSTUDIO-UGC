@@ -27,6 +27,7 @@ async def sendgrid_webhook(request: Request, db: AsyncSession = Depends(get_db))
     if not isinstance(events, list):
         events = [events]
 
+    failed = False
     for event in events:
         try:
             event_type_str = event.get("event")
@@ -44,7 +45,14 @@ async def sendgrid_webhook(request: Request, db: AsyncSession = Depends(get_db))
                     event_type=event_type,
                     raw_data=event,
                 )
-        except Exception as e:
-            logger.error(f"Error processing SendGrid event: {e}")
+        except Exception:
+            logger.exception("Error processing SendGrid event")
+            failed = True
+
+    if failed:
+        # Surface a non-2xx so SendGrid redelivers the batch instead of dropping
+        # events silently. update_message_status is idempotent, so reprocessing
+        # already-applied events in the batch is safe.
+        raise RuntimeError("One or more SendGrid events failed to process")
 
     return {"status": "ok"}

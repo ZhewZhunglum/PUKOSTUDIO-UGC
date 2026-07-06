@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 60
     jwt_refresh_token_expire_days: int = 7
 
+    # Shared secret guarding the provider webhook endpoints (SES / SendGrid /
+    # inbound). Configure the provider's callback URL to include ?token=<secret>
+    # (or send it as the X-Webhook-Token header). Empty = unauthenticated
+    # (allowed for local dev, refused in non-development environments).
+    webhook_secret: str = ""
+
+    # Timezone used for dashboard/analytics date bucketing and "today" ranges.
+    # Any IANA name (e.g. "UTC", "Asia/Shanghai"). Keeps daily stats from
+    # drifting across the UTC/local midnight boundary.
+    reporting_timezone: str = "UTC"
+
     # CORS
     frontend_url: str = "http://localhost:4317"
     base_url: str = "http://localhost:8917"

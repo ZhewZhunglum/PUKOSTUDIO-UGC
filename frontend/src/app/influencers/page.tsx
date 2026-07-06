@@ -23,17 +23,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import api from "@/lib/api";
 import { INFLUENCER_STATUS_MAP, SUPPLEMENT_NICHES, getFollowerTier } from "@/lib/constants";
+import { useDebouncedValue } from "@/lib/hooks";
 import type { Campaign, Influencer, PaginatedResponse } from "@/types";
 import {
   Download,
@@ -185,6 +178,8 @@ export default function InfluencersPage() {
   const [data, setData] = useState<PaginatedResponse<Influencer> | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
+  const reqIdRef = useRef(0);
   const [statusFilter, setStatusFilter] = useState("");
   const [nicheFilter, setNicheFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
@@ -205,9 +200,10 @@ export default function InfluencersPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchInfluencers = useCallback(async () => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     const params: Record<string, string | number> = { page, per_page: viewMode === "grid" ? 24 : 20 };
-    if (search) params.search = search;
+    if (debouncedSearch) params.search = debouncedSearch;
     if (statusFilter) params.status = statusFilter;
     if (nicheFilter) params.niche = nicheFilter;
     if (sourceFilter) params.source = sourceFilter;
@@ -215,17 +211,24 @@ export default function InfluencersPage() {
 
     try {
       const res = await api.get("/influencers", { params });
-      setData(res.data);
+      if (reqId === reqIdRef.current) setData(res.data);
     } catch {
-      setErrorMsg("达人列表加载失败，请稍后重试");
+      if (reqId === reqIdRef.current) setErrorMsg("达人列表加载失败，请稍后重试");
     } finally {
-      setLoading(false);
+      // Only the latest in-flight request may clear the spinner / apply results,
+      // so a slow earlier response can't overwrite a newer one.
+      if (reqId === reqIdRef.current) setLoading(false);
     }
-  }, [page, search, statusFilter, nicheFilter, sourceFilter, hasEmailFilter, viewMode]);
+  }, [page, debouncedSearch, statusFilter, nicheFilter, sourceFilter, hasEmailFilter, viewMode]);
 
   useEffect(() => {
     fetchInfluencers();
   }, [fetchInfluencers]);
+
+  // A new (debounced) search term resets to the first page of results.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
 
   useEffect(() => {
     api
@@ -465,7 +468,7 @@ export default function InfluencersPage() {
               <Input
                 placeholder="搜索达人名称或邮箱..."
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => setSearch(e.target.value)}
                 className="pl-10"
               />
             </div>
