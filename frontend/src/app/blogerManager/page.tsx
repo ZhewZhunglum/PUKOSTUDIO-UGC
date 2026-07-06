@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -35,6 +35,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import api from "@/lib/api";
 import { INFLUENCER_STATUS_MAP } from "@/lib/constants";
+import { useDebouncedValue } from "@/lib/hooks";
 import type {
   Campaign,
   Influencer,
@@ -266,6 +267,8 @@ export default function BlogerManagerPage() {
   const [wotoUnconfigured, setWotoUnconfigured] = useState(false);
   const [jobs, setJobs] = useState<WotoSyncJob[]>([]);
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
+  const reqIdRef = useRef(0);
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>("all");
   const [hasEmailFilter, setHasEmailFilter] = useState<"all" | "true" | "false">("all");
   const [sortBy, setSortBy] = useState("fans_num");
@@ -293,6 +296,7 @@ export default function BlogerManagerPage() {
   }, []);
 
   const fetchInfluencers = useCallback(async () => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -302,7 +306,7 @@ export default function BlogerManagerPage() {
         sort_by: sortBy,
         sort_order: "desc",
       };
-      if (search.trim()) params.search = search.trim();
+      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       if (platformFilter !== "all") params.platform = platformFilter;
       if (hasEmailFilter !== "all") params.has_email = hasEmailFilter;
 
@@ -331,16 +335,18 @@ export default function BlogerManagerPage() {
       const response = await api.get<PaginatedResponse<Influencer>>("/influencers", {
         params,
       });
-      setData(response.data);
+      if (reqId === reqIdRef.current) setData(response.data);
     } catch (error: unknown) {
+      if (reqId !== reqIdRef.current) return;
       const detail =
         (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         "红人管理列表加载失败";
       setErrorMsg(detail);
     } finally {
-      setLoading(false);
+      // Only the latest in-flight request applies results / clears the spinner.
+      if (reqId === reqIdRef.current) setLoading(false);
     }
-  }, [activeFolder, hasEmailFilter, page, platformFilter, search, sortBy, tags]);
+  }, [activeFolder, hasEmailFilter, page, platformFilter, debouncedSearch, sortBy, tags]);
 
   const fetchMeta = useCallback(async () => {
     setMetaLoading(true);
@@ -391,6 +397,11 @@ export default function BlogerManagerPage() {
   useEffect(() => {
     void fetchInfluencers();
   }, [fetchInfluencers]);
+
+  // A new (debounced) search term resets to the first page of results.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
 
   useEffect(() => {
     setPage(1);
