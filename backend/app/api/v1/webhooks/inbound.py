@@ -22,12 +22,20 @@ async def inbound_email(request: Request, db: AsyncSession = Depends(get_db)):
     logger.info("Inbound email received from %s", body.get("from", "unknown"))
     try:
         result = await conversation_service.ingest_inbound_email(db, body)
-        conversation_id = result.get("conversation_id")
-        if conversation_id:
-            from app.workers.ai_tasks import process_inbound_conversation
-
-            process_inbound_conversation.delay(str(conversation_id))
-        return {"status": "ok", **result}
-    except Exception as exc:
+    except Exception:
+        # Re-raise so get_db rolls back and the provider gets a non-2xx and
+        # retries. Previously this returned HTTP 200 on failure, which made the
+        # provider treat the delivery as accepted and silently drop the email.
         logger.exception("Failed to process inbound email")
-        return {"status": "error", "detail": str(exc)}
+        raise
+
+    conversation_id = result.get("conversation_id")
+    if conversation_id:
+        # Persist the conversation before dispatching the background task so the
+        # worker (which uses its own session) can actually see it.
+        await db.commit()
+
+        from app.workers.ai_tasks import process_inbound_conversation
+
+        process_inbound_conversation.delay(str(conversation_id))
+    return {"status": "ok", **result}
