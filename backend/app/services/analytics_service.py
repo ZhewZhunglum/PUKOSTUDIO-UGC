@@ -59,7 +59,10 @@ async def get_dashboard_stats(
     )
     active_campaigns = camp_count.scalar() or 0
 
-    # Email stats
+    # Email stats. Reuse one local-date expression object so the timezone bind
+    # parameter is emitted once (distinct objects would produce mismatched
+    # parameters and, in grouped queries, a GROUP BY mismatch).
+    local_date = _local_date_expr()
     email_stats = await db.execute(
         select(
             func.count(EmailMessage.id).label("total"),
@@ -91,8 +94,8 @@ async def get_dashboard_stats(
         )
         .where(
             EmailMessage.team_id == team_id,
-            _local_date_expr() >= start_date,
-            _local_date_expr() <= end_date,
+            local_date >= start_date,
+            local_date <= end_date,
         )
     )
     stats = email_stats.one()
@@ -119,12 +122,19 @@ async def get_dashboard_stats(
     }
 
 
-async def get_daily_stats(
-    db: AsyncSession, team_id: uuid.UUID, start_date: date, end_date: date
-) -> list[dict]:
-    result = await db.execute(
+def daily_stats_query(team_id: uuid.UUID, start_date: date, end_date: date):
+    """Build the per-day email-stats SELECT.
+
+    Extracted so it can be compiled and asserted in tests without a database.
+    A single shared ``day`` expression object is reused across SELECT / WHERE /
+    GROUP BY / ORDER BY so the timezone bind parameter is emitted exactly once;
+    distinct objects would render as different parameters and Postgres would
+    reject the grouped query ("column must appear in the GROUP BY clause").
+    """
+    day = _local_date_expr()
+    return (
         select(
-            _local_date_expr().label("day"),
+            day.label("day"),
             func.count(case((and_(
                 EmailMessage.direction == EmailDirection.outbound,
                 EmailMessage.status.in_([
@@ -151,12 +161,18 @@ async def get_daily_stats(
         )
         .where(
             EmailMessage.team_id == team_id,
-            _local_date_expr() >= start_date,
-            _local_date_expr() <= end_date,
+            day >= start_date,
+            day <= end_date,
         )
-        .group_by(_local_date_expr())
-        .order_by(_local_date_expr())
+        .group_by(day)
+        .order_by(day)
     )
+
+
+async def get_daily_stats(
+    db: AsyncSession, team_id: uuid.UUID, start_date: date, end_date: date
+) -> list[dict]:
+    result = await db.execute(daily_stats_query(team_id, start_date, end_date))
 
     return [
         {

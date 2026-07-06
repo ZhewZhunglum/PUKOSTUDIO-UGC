@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8917} next dev --webpack -p ${FRONTEND_PORT:-4317}",
+    "dev": "next dev --webpack -p 4317",
     "build": "next build",
-    "start": "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8917} next start -p ${FRONTEND_PORT:-4317}",
+    "start": "next start -p 4317",
     "lint": "eslint"
   },
   "dependencies": {
