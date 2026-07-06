@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import api from "@/lib/api";
 import { INFLUENCER_STATUS_MAP, SUPPLEMENT_NICHES, getFollowerTier } from "@/lib/constants";
+import { downloadExport } from "@/lib/download";
 import { useDebouncedValue } from "@/lib/hooks";
 import type { Campaign, Influencer, PaginatedResponse } from "@/types";
 import {
@@ -283,8 +284,8 @@ export default function InfluencersPage() {
     setErrorMsg(null);
 
     const name = file.name.toLowerCase();
-    if (!name.endsWith(".csv")) {
-      setErrorMsg("当前导入仅支持 CSV，请先把表格另存为 .csv");
+    if (!name.endsWith(".csv") && !name.endsWith(".xlsx")) {
+      setErrorMsg("导入仅支持 CSV 或 Excel(.xlsx)，请另存为其中一种格式");
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -304,25 +305,19 @@ export default function InfluencersPage() {
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (fmt: "csv" | "xlsx") => {
     try {
-      const params: Record<string, string> = {};
-      if (search) params.search = search;
-      if (statusFilter) params.status = statusFilter;
-      if (nicheFilter) params.niche = nicheFilter;
-      if (sourceFilter) params.source = sourceFilter;
-      const res = await api.get("/influencers/export", {
-        params,
-        responseType: "blob",
-      });
-      const url = URL.createObjectURL(new Blob([res.data], { type: "text/csv" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "influencers.csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      await downloadExport(
+        "/influencers/export",
+        {
+          format: fmt,
+          search: search || undefined,
+          status: statusFilter || undefined,
+          niche: nicheFilter || undefined,
+          source: sourceFilter || undefined,
+        },
+        `influencers.${fmt}`,
+      );
     } catch {
       setErrorMsg("导出失败，请稍后重试");
     }
@@ -436,12 +431,15 @@ export default function InfluencersPage() {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
             {errorMsg && <p style={{ fontSize: 12, color: "var(--destructive)", maxWidth: 280, textAlign: "right" }}>{errorMsg}</p>}
             <div className="ds-row" style={{ gap: 8 }}>
-              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
-              <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={handleExport}>
-                <Download className="h-[14px] w-[14px]" />导出
+              <input ref={fileInputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleImport} />
+              <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => handleExport("csv")}>
+                <Download className="h-[14px] w-[14px]" />导出 CSV
+              </button>
+              <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => handleExport("xlsx")}>
+                <Download className="h-[14px] w-[14px]" />导出 Excel
               </button>
               <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => fileInputRef.current?.click()}>
-                <Upload className="h-[14px] w-[14px]" />导入 CSV
+                <Upload className="h-[14px] w-[14px]" />导入 CSV/Excel
               </button>
               <button className="ds-btn ds-btn-primary ds-btn-sm" onClick={openCreate}>
                 <Plus className="h-[14px] w-[14px]" />添加达人

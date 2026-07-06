@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/layout/app-layout";
 import api from "@/lib/api";
+import { downloadExport } from "@/lib/download";
 import type { DashboardData } from "@/types";
 import { ArrowRight, Download, Plus, TrendingUp, TrendingDown } from "lucide-react";
 
@@ -181,6 +182,15 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleExport = async (fmt: "csv" | "xlsx") => {
+    try {
+      await downloadExport("/analytics/export", { format: fmt }, `dashboard.${fmt}`);
+    } catch {
+      // export failure is non-critical; surface via console for now
+      console.error("dashboard export failed");
+    }
+  };
+
   const stats = data?.stats;
   const metrics: { label: string; value: number; delta: number; spark: number[]; suffix: string; inverted?: boolean }[] = [
     { label: "已发送邮件", value: stats?.emails_sent ?? 8423,        delta: 12,   spark: SPARKS.sent,   suffix: ""  },
@@ -207,8 +217,11 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="ds-row" style={{ gap: 8 }}>
-            <button className="ds-btn ds-btn-outline">
-              <Download className="h-[14px] w-[14px]" />导出周报
+            <button className="ds-btn ds-btn-outline" onClick={() => handleExport("xlsx")}>
+              <Download className="h-[14px] w-[14px]" />导出周报 (Excel)
+            </button>
+            <button className="ds-btn ds-btn-outline" onClick={() => handleExport("csv")}>
+              <Download className="h-[14px] w-[14px]" />CSV
             </button>
             <Link href="/campaigns/new" className="ds-btn ds-btn-primary">
               <Plus className="h-[14px] w-[14px]" />新建活动
