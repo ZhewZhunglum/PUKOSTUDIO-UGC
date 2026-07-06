@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.v1 import (
     ai,
@@ -16,8 +16,12 @@ from app.api.v1 import (
     uploads,
 )
 from app.api.v1.webhooks import inbound, sendgrid, ses
+from app.api.v1.webhooks.security import verify_webhook_secret
 
 api_router = APIRouter()
+
+# Provider webhooks are public endpoints; gate them behind the shared secret.
+webhook_deps = [Depends(verify_webhook_secret)]
 
 api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 api_router.include_router(influencers.router, prefix="/influencers", tags=["Influencers"])
@@ -32,6 +36,12 @@ api_router.include_router(tracking.router, prefix="/track", tags=["Tracking"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["Uploads"])
 api_router.include_router(discovery.router, prefix="/discovery", tags=["Discovery"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
-api_router.include_router(ses.router, prefix="/webhooks/ses", tags=["Webhooks"])
-api_router.include_router(sendgrid.router, prefix="/webhooks/sendgrid", tags=["Webhooks"])
-api_router.include_router(inbound.router, prefix="/webhooks/inbound", tags=["Webhooks"])
+api_router.include_router(
+    ses.router, prefix="/webhooks/ses", tags=["Webhooks"], dependencies=webhook_deps
+)
+api_router.include_router(
+    sendgrid.router, prefix="/webhooks/sendgrid", tags=["Webhooks"], dependencies=webhook_deps
+)
+api_router.include_router(
+    inbound.router, prefix="/webhooks/inbound", tags=["Webhooks"], dependencies=webhook_deps
+)

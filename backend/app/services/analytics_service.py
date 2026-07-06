@@ -1,9 +1,12 @@
+import logging
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.campaign import (
     Campaign,
     CampaignStatus,
@@ -11,12 +14,34 @@ from app.models.campaign import (
 from app.models.email_message import EmailDirection, EmailMessage, EmailStatus
 from app.models.influencer import Influencer
 
+logger = logging.getLogger(__name__)
+
+
+def _reporting_tz() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.reporting_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            "Invalid REPORTING_TIMEZONE %r; falling back to UTC.", settings.reporting_timezone
+        )
+        return ZoneInfo("UTC")
+
+
+def _local_date_expr():
+    """SQL expression for created_at's calendar date in the reporting timezone.
+
+    ``timezone(zone, timestamptz)`` yields the wall-clock timestamp in that zone;
+    wrapping it in ``date()`` gives an unambiguous local date, so daily buckets
+    and the today/range boundaries don't drift across the UTC midnight line.
+    """
+    return func.date(func.timezone(settings.reporting_timezone, EmailMessage.created_at))
+
 
 async def get_dashboard_stats(
     db: AsyncSession, team_id: uuid.UUID, start_date: date | None = None, end_date: date | None = None
 ) -> dict:
     if not end_date:
-        end_date = date.today()
+        end_date = datetime.now(_reporting_tz()).date()
     if not start_date:
         start_date = end_date - timedelta(days=30)
 
@@ -60,12 +85,14 @@ async def get_dashboard_stats(
                 EmailMessage.direction == EmailDirection.outbound,
                 EmailMessage.status == EmailStatus.bounced,
             ), 1))).label("bounced"),
-            func.count(case((EmailMessage.direction == EmailDirection.inbound, 1))).label("replied"),
+            func.count(func.distinct(case(
+                (EmailMessage.direction == EmailDirection.inbound, EmailMessage.influencer_id)
+            ))).label("replied"),
         )
         .where(
             EmailMessage.team_id == team_id,
-            func.date(EmailMessage.created_at) >= start_date,
-            func.date(EmailMessage.created_at) <= end_date,
+            _local_date_expr() >= start_date,
+            _local_date_expr() <= end_date,
         )
     )
     stats = email_stats.one()
@@ -97,7 +124,7 @@ async def get_daily_stats(
 ) -> list[dict]:
     result = await db.execute(
         select(
-            func.date(EmailMessage.created_at).label("day"),
+            _local_date_expr().label("day"),
             func.count(case((and_(
                 EmailMessage.direction == EmailDirection.outbound,
                 EmailMessage.status.in_([
@@ -124,11 +151,11 @@ async def get_daily_stats(
         )
         .where(
             EmailMessage.team_id == team_id,
-            func.date(EmailMessage.created_at) >= start_date,
-            func.date(EmailMessage.created_at) <= end_date,
+            _local_date_expr() >= start_date,
+            _local_date_expr() <= end_date,
         )
-        .group_by(func.date(EmailMessage.created_at))
-        .order_by(func.date(EmailMessage.created_at))
+        .group_by(_local_date_expr())
+        .order_by(_local_date_expr())
     )
 
     return [
