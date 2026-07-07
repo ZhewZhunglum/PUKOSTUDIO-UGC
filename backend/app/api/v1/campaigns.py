@@ -202,6 +202,17 @@ async def remove_campaign_enrollment(
     )
 
 
+@router.get("/{campaign_id}/send-progress")
+async def get_campaign_send_progress(
+    campaign_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await campaign_service.get_send_progress(
+        db, campaign_id, current_user.team_id
+    )
+
+
 @router.get("/{campaign_id}/stats")
 async def get_campaign_stats(
     campaign_id: uuid.UUID,
