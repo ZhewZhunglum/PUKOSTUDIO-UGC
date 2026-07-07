@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import api from "@/lib/api";
+import { downloadExport } from "@/lib/download";
 import type { EmailTemplate } from "@/types";
-import { ChevronDown, ChevronUp, Copy, Edit, Eye, Loader2, Plus, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Download, Edit, Eye, Loader2, Plus, Sparkles, Trash2, Upload, Wand2 } from "lucide-react";
 
 type ConvertResult = {
   subject: string;
@@ -68,6 +69,9 @@ export default function TemplatesPage() {
   const [converting, setConverting] = useState<"rule" | "ai" | null>(null);
   const [convertResult, setConvertResult] = useState<ConvertResult | null>(null);
 
+  const [ioMessage, setIoMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const fetchTemplates = useCallback(() => {
     setLoading(true);
     Promise.all([
@@ -85,6 +89,39 @@ export default function TemplatesPage() {
   useEffect(() => {
     fetchTemplates();
   }, [fetchTemplates]);
+
+  const handleExport = async (fmt: "csv" | "xlsx") => {
+    try {
+      await downloadExport("/templates/export", { format: fmt }, `templates.${fmt}`);
+    } catch {
+      setIoMessage("导出失败，请稍后重试");
+    }
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setIoMessage(null);
+    const name = file.name.toLowerCase();
+    if (!name.endsWith(".csv") && !name.endsWith(".xlsx")) {
+      setIoMessage("导入仅支持 CSV 或 Excel(.xlsx)");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await api.post("/templates/import", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setIoMessage(`导入完成：${res.data.imported} 成功，${res.data.skipped} 跳过`);
+      fetchTemplates();
+    } catch {
+      setIoMessage("导入失败，请确认表头包含 name/subject/body_html");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const resetConverter = () => {
     setRawSubject("");
@@ -208,11 +245,25 @@ export default function TemplatesPage() {
                 <SelectItem value="zh">中文</SelectItem>
               </SelectContent>
             </Select>
+            <input ref={fileInputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleImport} />
+            <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => handleExport("csv")}>
+              <Download className="h-[14px] w-[14px]" />导出 CSV
+            </button>
+            <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => handleExport("xlsx")}>
+              <Download className="h-[14px] w-[14px]" />导出 Excel
+            </button>
+            <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="h-[14px] w-[14px]" />导入 CSV/Excel
+            </button>
             <button className="ds-btn ds-btn-primary" onClick={openCreate}>
               <Plus className="h-[14px] w-[14px]" />新建模板
             </button>
           </div>
         </div>
+
+        {ioMessage && (
+          <p className="text-sm text-muted-foreground">{ioMessage}</p>
+        )}
 
         <div className="text-sm text-muted-foreground">
           使用 {"{{name}}"}, {"{{first_name}}"} 等变量实现个性化。系统会自动替换为达人的真实信息。

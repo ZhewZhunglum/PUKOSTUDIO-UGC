@@ -1,15 +1,12 @@
-import csv
-import io
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.exceptions import BadRequestException
 from app.core.pagination import PaginationParams, get_pagination
+from app.core.tabular import normalize_format, parse_tabular, tabular_response
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.email import EmailMessageResponse
@@ -84,25 +81,8 @@ async def import_influencers(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    filename = (file.filename or "").lower()
-    if not (filename.endswith(".csv") or filename.endswith(".xlsx")):
-        raise BadRequestException("Only CSV or XLSX uploads are supported")
-
     content = await file.read()
-
-    if filename.endswith(".xlsx"):
-        import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(content))
-        ws = wb.active
-        headers = [str(cell.value or "").strip().lower() for cell in next(ws.iter_rows(min_row=1, max_row=1))]
-        rows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            rows.append({headers[i]: (str(v).strip() if v is not None else "") for i, v in enumerate(row)})
-    else:
-        text = content.decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(text))
-        rows = [{k.strip().lower(): v for k, v in row.items()} for row in reader]
-
+    rows = parse_tabular(file.filename, content)
     result = await influencer_service.import_influencers_from_rows(
         db, current_user.team_id, rows
     )
@@ -111,6 +91,7 @@ async def import_influencers(
 
 @router.get("/export")
 async def export_influencers(
+    format: str = Query("csv"),
     search: str | None = Query(None),
     status: str | None = Query(None),
     niche: str | None = Query(None),
@@ -122,61 +103,54 @@ async def export_influencers(
     from app.config import settings
     from app.core.pagination import PaginationParams
 
+    fmt = normalize_format(format)
     BATCH_SIZE = 500
+    headers = [
+        "name", "email", "niche", "country", "status",
+        "platform", "username", "followers", "engagement_rate", "source", "created_at",
+    ]
 
-    async def generate_csv():
-        header = io.StringIO()
-        csv.writer(header).writerow([
-            "name", "email", "niche", "country", "status",
-            "platform", "username", "followers", "engagement_rate", "source", "created_at",
-        ])
-        yield header.getvalue()
+    rows: list[list] = []
+    page = 1
+    while len(rows) < settings.export_max_rows:
+        result = await influencer_service.list_influencers(
+            db,
+            team_id=current_user.team_id,
+            params=PaginationParams(page=page, per_page=BATCH_SIZE),
+            search=search,
+            status=status,
+            niche=niche,
+            platform=platform,
+            source=source,
+        )
+        items = result["items"]
+        if not items:
+            break
+        for inf in items:
+            first_platform = inf.platforms[0] if inf.platforms else None
+            rows.append([
+                inf.name,
+                inf.email or "",
+                inf.niche or "",
+                inf.country or "",
+                inf.status.value if inf.status else "",
+                first_platform.platform.value if first_platform else "",
+                first_platform.username if first_platform else "",
+                first_platform.followers if first_platform else "",
+                first_platform.engagement_rate if first_platform else "",
+                inf.source or "",
+                inf.created_at.isoformat() if inf.created_at else "",
+            ])
+        if len(items) < BATCH_SIZE:
+            break
+        page += 1
 
-        page = 1
-        fetched = 0
-        while fetched < settings.export_max_rows:
-            result = await influencer_service.list_influencers(
-                db,
-                team_id=current_user.team_id,
-                params=PaginationParams(page=page, per_page=BATCH_SIZE),
-                search=search,
-                status=status,
-                niche=niche,
-                platform=platform,
-                source=source,
-            )
-            items = result["items"]
-            if not items:
-                break
-
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            for inf in items:
-                first_platform = inf.platforms[0] if inf.platforms else None
-                writer.writerow([
-                    inf.name,
-                    inf.email or "",
-                    inf.niche or "",
-                    inf.country or "",
-                    inf.status.value if inf.status else "",
-                    first_platform.platform.value if first_platform else "",
-                    first_platform.username if first_platform else "",
-                    first_platform.followers if first_platform else "",
-                    first_platform.engagement_rate if first_platform else "",
-                    inf.source or "",
-                    inf.created_at.isoformat() if inf.created_at else "",
-                ])
-            yield buf.getvalue()
-
-            fetched += len(items)
-            if len(items) < BATCH_SIZE:
-                break
-            page += 1
-
-    return StreamingResponse(
-        generate_csv(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=influencers.csv"},
+    return tabular_response(
+        fmt=fmt,
+        filename_stem="influencers",
+        headers=headers,
+        rows=rows[: settings.export_max_rows],
+        sheet_title="Influencers",
     )
 
 

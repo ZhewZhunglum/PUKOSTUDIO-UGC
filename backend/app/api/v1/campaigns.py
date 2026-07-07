@@ -1,9 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.tabular import normalize_format, tabular_response
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.ai import CampaignAIPlaybookResponse, CampaignAIPlaybookUpsert
@@ -149,6 +150,43 @@ async def list_campaign_enrollments(
 ):
     return await campaign_service.list_campaign_enrollments(
         db, campaign_id, current_user.team_id
+    )
+
+
+@router.get("/{campaign_id}/enrollments/export")
+async def export_campaign_enrollments(
+    campaign_id: uuid.UUID,
+    format: str = Query("csv"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    fmt = normalize_format(format)
+    enrollments = await campaign_service.list_campaign_enrollments(
+        db, campaign_id, current_user.team_id
+    )
+    headers = [
+        "influencer_name", "influencer_email", "status", "current_step",
+        "last_email_status", "last_sent_at", "enrolled_at", "failure_reason",
+    ]
+    rows = [
+        [
+            e["influencer_name"],
+            e["influencer_email"] or "",
+            e["status"],
+            e["current_step"],
+            e["last_email_status"] or "",
+            e["last_sent_at"],
+            e["enrolled_at"],
+            e["failure_reason"] or "",
+        ]
+        for e in enrollments
+    ]
+    return tabular_response(
+        fmt=fmt,
+        filename_stem=f"campaign_{campaign_id}_enrollments",
+        headers=headers,
+        rows=rows,
+        sheet_title="Enrollments",
     )
 
 

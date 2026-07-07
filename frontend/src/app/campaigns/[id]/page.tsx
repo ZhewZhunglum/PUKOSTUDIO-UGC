@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import api from "@/lib/api";
+import { downloadExport } from "@/lib/download";
 import type {
   Campaign,
   CampaignAIPlaybook,
@@ -33,6 +34,7 @@ import type {
 } from "@/types";
 import {
   ArrowLeft,
+  Download,
   Pause,
   Play,
   Plus,
@@ -705,21 +707,37 @@ export default function CampaignDetailPage() {
                   可以查看每位达人的投递状态、最近一次邮件状态和失败原因。
                 </p>
               </div>
-              {(campaign.status === "draft" || campaign.status === "paused") && (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => router.push(`/discovery?campaign_id=${campaignId}`)}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    从 Woto 自动建联
-                  </Button>
-                  <Button variant="outline" onClick={openAddInfluencers}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    添加达人
-                  </Button>
-                </div>
-              )}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={enrollments.length === 0}
+                  onClick={() =>
+                    downloadExport(
+                      `/campaigns/${campaignId}/enrollments/export`,
+                      { format: "xlsx" },
+                      `campaign_${campaignId}_enrollments.xlsx`,
+                    ).catch(() => alert("导出失败"))
+                  }
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  导出结果 (Excel)
+                </Button>
+                {(campaign.status === "draft" || campaign.status === "paused") && (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => router.push(`/discovery?campaign_id=${campaignId}`)}
+                    >
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      从 Woto 自动建联
+                    </Button>
+                    <Button variant="outline" onClick={openAddInfluencers}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      添加达人
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
