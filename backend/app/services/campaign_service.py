@@ -277,6 +277,40 @@ async def remove_enrollment(
     await db.delete(enrollment)
 
 
+async def get_send_progress(
+    db: AsyncSession, campaign_id: uuid.UUID, team_id: uuid.UUID
+) -> dict:
+    """Live send progress for a campaign, derived from enrollment statuses.
+
+    `pending` = still queued, `failed` = bounced, `sent` = everything that got
+    past the sending stage (in_progress/replied/completed/unsubscribed).
+    """
+    campaign = await get_campaign(db, campaign_id, team_id)  # team-scoped existence check
+
+    result = await db.execute(
+        select(CampaignInfluencer.status, func.count(CampaignInfluencer.id))
+        .where(CampaignInfluencer.campaign_id == campaign_id)
+        .group_by(CampaignInfluencer.status)
+    )
+    by_status = {status.value: count for status, count in result.all()}
+    total = sum(by_status.values())
+    pending = by_status.get(CampaignInfluencerStatus.queued.value, 0)
+    failed = by_status.get(CampaignInfluencerStatus.bounced.value, 0)
+    sent = total - pending - failed
+    processed = total - pending
+
+    return {
+        "campaign_status": campaign.status.value,
+        "is_active": campaign.status == CampaignStatus.active,
+        "total": total,
+        "pending": pending,
+        "sent": sent,
+        "failed": failed,
+        "by_status": by_status,
+        "progress_pct": round(processed / total * 100, 1) if total else 0.0,
+    }
+
+
 async def get_campaign_stats(db: AsyncSession, campaign_id: uuid.UUID) -> dict:
     # Count messages by status
     result = await db.execute(

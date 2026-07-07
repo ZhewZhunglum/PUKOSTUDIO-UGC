@@ -232,6 +232,16 @@ const SOP_GOVERNANCE_FIELDS: Array<{
   },
 ];
 
+type SendProgress = {
+  campaign_status: string;
+  is_active: boolean;
+  total: number;
+  pending: number;
+  sent: number;
+  failed: number;
+  progress_pct: number;
+};
+
 export default function CampaignDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -247,6 +257,7 @@ export default function CampaignDetailPage() {
   const [allInfluencers, setAllInfluencers] = useState<Influencer[]>([]);
   const [influencerSearch, setInfluencerSearch] = useState("");
   const [selectedInfluencerIds, setSelectedInfluencerIds] = useState<string[]>([]);
+  const [progress, setProgress] = useState<SendProgress | null>(null);
 
   const campaignId = useMemo(() => String(params.id), [params.id]);
 
@@ -310,6 +321,27 @@ export default function CampaignDetailPage() {
       void loadCampaign();
     }
   }, [campaignId, loadCampaign]);
+
+  const loadProgress = useCallback(async () => {
+    try {
+      const res = await api.get(`/campaigns/${campaignId}/send-progress`);
+      setProgress(res.data);
+    } catch {
+      // progress is best-effort; ignore transient errors
+    }
+  }, [campaignId]);
+
+  // Poll send progress live while the campaign is actively sending; otherwise
+  // fetch once. The interval is cleared on unmount / status change.
+  useEffect(() => {
+    if (!campaign) return;
+    void loadProgress();
+    if (campaign.status !== "active") return;
+    const timer = window.setInterval(() => {
+      void loadProgress();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [campaign, loadProgress]);
 
   const handleAction = async (action: string) => {
     try {
@@ -529,6 +561,41 @@ export default function CampaignDetailPage() {
               <p className="text-2xl font-bold">{Number(stats.reply_rate || 0).toFixed(1)}%</p>
             </Card>
           </div>
+        )}
+
+        {progress && progress.total > 0 && (
+          <Card className="space-y-3 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">发送进度</h3>
+              <span className="text-sm text-muted-foreground">
+                {progress.is_active ? "发送中 · 每 3 秒自动刷新" : "当前未在发送"}
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${progress.progress_pct}%` }}
+              />
+            </div>
+            <div className="grid grid-cols-4 gap-4">
+              <div>
+                <div className="text-sm text-muted-foreground">总数</div>
+                <div className="text-2xl font-bold">{progress.total}</div>
+              </div>
+              <div>
+                <div className="text-sm text-muted-foreground">已发送</div>
+                <div className="text-2xl font-bold text-green-600">{progress.sent}</div>
+              </div>
+              <div>
+                <div className="text-sm text-muted-foreground">待发送</div>
+                <div className="text-2xl font-bold">{progress.pending}</div>
+              </div>
+              <div>
+                <div className="text-sm text-muted-foreground">失败</div>
+                <div className="text-2xl font-bold text-red-500">{progress.failed}</div>
+              </div>
+            </div>
+          </Card>
         )}
 
         <div className="grid gap-6 lg:grid-cols-3">
