@@ -130,12 +130,23 @@ def send_single_email(
         inject_tracking,
         select_best_account,
     )
-    from app.models.campaign import CampaignInfluencer, CampaignInfluencerStatus, CampaignStep
+    from app.models.campaign import (
+        Campaign,
+        CampaignInfluencer,
+        CampaignInfluencerStatus,
+        CampaignStatus,
+        CampaignStep,
+    )
     from app.models.email_account import EmailAccount
     from app.models.email_message import EmailDirection, EmailMessage, EmailStatus
     from app.models.influencer import Influencer
     from app.models.template import EmailTemplate
     from app.services.template_service import build_influencer_variables, render_template
+
+    # Statuses that mean "this influencer already received the campaign email".
+    _ALREADY_SENT = [
+        EmailStatus.sent, EmailStatus.delivered, EmailStatus.opened, EmailStatus.clicked,
+    ]
 
     db = get_sync_session()
     try:
@@ -147,6 +158,41 @@ def send_single_email(
         ).scalar_one_or_none()
 
         if not ci:
+            return
+
+        # Idempotency: if this influencer already has a sent (or further) outbound
+        # message for this campaign, do not send again. Protects against Celery
+        # redelivery, double dispatch, and re-runs after a resume.
+        already = db.execute(
+            select(EmailMessage.id).where(
+                EmailMessage.campaign_id == uuid.UUID(campaign_id),
+                EmailMessage.influencer_id == uuid.UUID(influencer_id),
+                EmailMessage.direction == EmailDirection.outbound,
+                EmailMessage.status.in_(_ALREADY_SENT),
+            )
+        ).first()
+        if already:
+            logger.info(
+                "Influencer %s already emailed for campaign %s; skipping duplicate send",
+                influencer_id, campaign_id,
+            )
+            return
+
+        # Honor pause/stop: only send while the campaign is active. If it was
+        # paused/stopped after this task was queued, reset the enrollment to
+        # queued so a later resume re-dispatches it (断点续发) rather than sending
+        # into a paused campaign or stranding it in_progress.
+        campaign = db.execute(
+            select(Campaign).where(Campaign.id == uuid.UUID(campaign_id))
+        ).scalar_one_or_none()
+        if not campaign or campaign.status != CampaignStatus.active:
+            if ci.status == CampaignInfluencerStatus.in_progress:
+                ci.status = CampaignInfluencerStatus.queued
+                db.commit()
+            logger.info(
+                "Campaign %s not active; deferring send for enrollment %s",
+                campaign_id, campaign_influencer_id,
+            )
             return
 
         # Get first campaign step (MVP: single step)
@@ -218,7 +264,10 @@ def send_single_email(
             body_html=signed_body,
             body_text=signed_text,
             status=EmailStatus.sending,
-            metadata_={},
+            metadata_={
+                "attempts": self.request.retries + 1,
+                "last_attempt_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
         db.add(message)
         db.commit()
@@ -278,14 +327,18 @@ def send_single_email(
             failed_message.metadata_ = {
                 **(failed_message.metadata_ or {}),
                 "failure_reason": str(e),
+                "attempts": self.request.retries + 1,
+                "last_attempt_at": datetime.now(timezone.utc).isoformat(),
             }
         db.commit()
 
         # A transient failure (SMTP timeout, provider 5xx / rate limit) should be
-        # retried rather than permanently bouncing the influencer. Only give up —
-        # and mark the enrollment bounced — once all retries are exhausted.
+        # retried with exponential backoff rather than permanently bouncing the
+        # influencer. Only give up — and mark the enrollment bounced — once all
+        # retries are exhausted.
         try:
-            raise self.retry(exc=e)
+            countdown = min(60 * (2 ** self.request.retries), 3600)
+            raise self.retry(exc=e, countdown=countdown)
         except self.MaxRetriesExceededError:
             ci = db.execute(
                 select(CampaignInfluencer).where(
