@@ -30,11 +30,25 @@ def get_email_sender(account: EmailAccount) -> EmailSender:
     return sender_class(config=account.provider_config)
 
 
+# Warmup ramp: the effective daily cap by warmup_stage. A fresh account (stage 0)
+# is capped at 50/day and grows as the stage advances (see the advance_warmup
+# beat task), never exceeding the account's configured daily_limit. Sending a
+# lot from a cold domain/IP is the fastest way to get spam-filtered.
+WARMUP_CAPS = [50, 100, 200, 350, 500, 750, 1000]
+
+
+def effective_daily_limit(account: EmailAccount) -> int:
+    """The lesser of the configured daily_limit and the current warmup cap."""
+    stage = getattr(account, "warmup_stage", 0) or 0
+    cap = WARMUP_CAPS[stage] if stage < len(WARMUP_CAPS) else account.daily_limit
+    return min(account.daily_limit, cap)
+
+
 def select_best_account(accounts: list[EmailAccount], to_domain: str | None = None) -> EmailAccount | None:
     """Select the best email account for sending.
 
     Strategy:
-    1. Filter active, healthy, under-limit accounts
+    1. Filter active, healthy, under-limit accounts (limit respects warmup ramp)
     2. Prefer accounts with most remaining daily capacity
     3. Prefer accounts not recently used for the target domain (when applicable)
     """
@@ -42,7 +56,7 @@ def select_best_account(accounts: list[EmailAccount], to_domain: str | None = No
         a for a in accounts
         if a.is_active
         and a.health_status.value == "healthy"
-        and a.sent_today < a.daily_limit
+        and a.sent_today < effective_daily_limit(a)
     ]
 
     if not eligible:
@@ -50,9 +64,36 @@ def select_best_account(accounts: list[EmailAccount], to_domain: str | None = No
         return None
 
     # Sort by remaining capacity (most remaining first)
-    eligible.sort(key=lambda a: a.daily_limit - a.sent_today, reverse=True)
+    eligible.sort(key=lambda a: effective_daily_limit(a) - a.sent_today, reverse=True)
 
     return eligible[0]
+
+
+def unsubscribe_url(base_url: str, message_id: str) -> str:
+    return f"{base_url}/api/v1/track/unsubscribe/{message_id}"
+
+
+def unsubscribe_headers(base_url: str, message_id: str) -> dict[str, str]:
+    """RFC 8058 one-click unsubscribe headers — improve inbox placement."""
+    url = unsubscribe_url(base_url, message_id)
+    return {
+        "List-Unsubscribe": f"<{url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+
+
+def inject_unsubscribe(html_body: str, message_id: str, base_url: str) -> str:
+    """Append a visible unsubscribe footer (compliance + deliverability)."""
+    url = unsubscribe_url(base_url, message_id)
+    footer = (
+        '<div style="margin-top:16px;font-size:12px;color:#9ca3af;'
+        'font-family:Arial,Helvetica,sans-serif">'
+        f'若不想再收到此类邮件，可<a href="{url}" style="color:#9ca3af">点此退订</a>。'
+        "</div>"
+    )
+    if "</body>" in html_body:
+        return html_body.replace("</body>", f"{footer}</body>")
+    return html_body + footer
 
 
 def render_signature_html(

@@ -31,6 +31,12 @@ celery_app.conf.update(
     # up in queues nothing consumed — they silently never ran. All tasks now use
     # the default queue the single worker actually consumes.
     beat_schedule={
+        # advance_warmup must run BEFORE reset_daily_counts zeroes sent_today,
+        # since it only promotes accounts that actually sent mail today.
+        "advance-email-warmup": {
+            "task": "app.workers.email_tasks.advance_warmup",
+            "schedule": crontab(hour=23, minute=50),
+        },
         "reset-daily-email-counts": {
             "task": "app.workers.email_tasks.reset_daily_counts",
             "schedule": crontab(hour=0, minute=0),  # Midnight UTC

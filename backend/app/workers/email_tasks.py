@@ -123,12 +123,16 @@ def send_single_email(
     influencer_name: str,
 ):
     """Send a single email for a campaign."""
+    from email_validator import EmailNotValidError, validate_email
+
     from app.config import settings
     from app.integrations.email.manager import (
         apply_signature,
         get_email_sender,
         inject_tracking,
+        inject_unsubscribe,
         select_best_account,
+        unsubscribe_headers,
     )
     from app.models.campaign import (
         Campaign,
@@ -140,7 +144,9 @@ def send_single_email(
     from app.models.email_account import EmailAccount
     from app.models.email_message import EmailDirection, EmailMessage, EmailStatus
     from app.models.influencer import Influencer
+    from app.models.suppression import EmailSuppression, SuppressionReason
     from app.models.template import EmailTemplate
+    from app.services import suppression_service
     from app.services.template_service import build_influencer_variables, render_template
 
     # Statuses that mean "this influencer already received the campaign email".
@@ -193,6 +199,48 @@ def send_single_email(
                 "Campaign %s not active; deferring send for enrollment %s",
                 campaign_id, campaign_influencer_id,
             )
+            return
+
+        def _skip_permanently(reason: str, status: CampaignInfluencerStatus) -> None:
+            """Mark the enrollment terminally skipped and leave an audit message."""
+            ci.status = status
+            db.add(EmailMessage(
+                team_id=uuid.UUID(team_id),
+                campaign_id=uuid.UUID(campaign_id),
+                influencer_id=uuid.UUID(influencer_id),
+                direction=EmailDirection.outbound,
+                from_address="",
+                to_address=to_email,
+                subject="(not sent)",
+                status=EmailStatus.failed,
+                metadata_={"failure_reason": reason},
+            ))
+            db.commit()
+            logger.info("Skipping send to %s: %s", to_email, reason)
+
+        # Pre-send validation: a syntactically invalid address can never be
+        # delivered — fail fast instead of burning a provider call and a bounce.
+        try:
+            validate_email(to_email, check_deliverability=False)
+        except EmailNotValidError as exc:
+            _skip_permanently(f"邮箱地址无效: {exc}", CampaignInfluencerStatus.bounced)
+            return
+
+        # Suppression list: never mail addresses that bounced, complained, or
+        # unsubscribed. This is the core deliverability guard.
+        suppression = db.execute(
+            select(EmailSuppression).where(
+                EmailSuppression.team_id == uuid.UUID(team_id),
+                EmailSuppression.email == suppression_service.normalize_email(to_email),
+            )
+        ).scalar_one_or_none()
+        if suppression:
+            terminal = (
+                CampaignInfluencerStatus.unsubscribed
+                if suppression.reason == SuppressionReason.unsubscribed
+                else CampaignInfluencerStatus.bounced
+            )
+            _skip_permanently(f"收件人在抑制名单中（{suppression.reason.value}）", terminal)
             return
 
         # Get first campaign step (MVP: single step)
@@ -273,18 +321,21 @@ def send_single_email(
         db.commit()
         db.refresh(message)
 
-        # Inject tracking after the signature
-        tracked_body = inject_tracking(signed_body, str(message.id), settings.base_url)
+        # Inject unsubscribe footer then the tracking pixel (pixel stays last).
+        final_body = inject_unsubscribe(signed_body, str(message.id), settings.base_url)
+        final_body = inject_tracking(final_body, str(message.id), settings.base_url)
 
-        # Send via provider
+        # Send via provider with RFC 8058 one-click unsubscribe headers —
+        # mailbox providers weigh these heavily for bulk-sender reputation.
         sender = get_email_sender(account)
         message_id = asyncio.run(
             sender.send(
                 from_address=f"{account.display_name or 'Team'} <{account.email_address}>",
                 to_address=to_email,
                 subject=rendered_subject,
-                html_body=tracked_body,
+                html_body=final_body,
                 text_body=signed_text,
+                headers=unsubscribe_headers(settings.base_url, str(message.id)),
             )
         )
 
@@ -362,5 +413,35 @@ def reset_daily_counts():
         db.execute(update(EmailAccount).values(sent_today=0))
         db.commit()
         logger.info("Daily email counts reset")
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.email_tasks.advance_warmup")
+def advance_warmup():
+    """Advance the warmup stage of healthy accounts that actually sent mail.
+
+    Runs daily (before reset_daily_counts zeroes the counters). An account moves
+    up one stage only when it is healthy and sent something today — idle or
+    degraded accounts stay put, so the ramp never outruns real sending history.
+    """
+    from app.integrations.email.manager import WARMUP_CAPS
+    from app.models.email_account import EmailAccount, EmailHealthStatus
+
+    max_stage = len(WARMUP_CAPS)
+    db = get_sync_session()
+    try:
+        result = db.execute(
+            update(EmailAccount)
+            .where(
+                EmailAccount.is_active,
+                EmailAccount.health_status == EmailHealthStatus.healthy,
+                EmailAccount.sent_today > 0,
+                EmailAccount.warmup_stage < max_stage,
+            )
+            .values(warmup_stage=EmailAccount.warmup_stage + 1)
+        )
+        db.commit()
+        logger.info("Advanced warmup stage for %s account(s)", result.rowcount)
     finally:
         db.close()
