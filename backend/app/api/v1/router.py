@@ -11,6 +11,7 @@ from app.api.v1 import (
     influencers,
     settings,
     sop,
+    suppressions,
     templates,
     tracking,
     uploads,
@@ -36,6 +37,7 @@ api_router.include_router(tracking.router, prefix="/track", tags=["Tracking"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["Uploads"])
 api_router.include_router(discovery.router, prefix="/discovery", tags=["Discovery"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
+api_router.include_router(suppressions.router, prefix="/suppressions", tags=["Suppressions"])
 api_router.include_router(
     ses.router, prefix="/webhooks/ses", tags=["Webhooks"], dependencies=webhook_deps
 )
