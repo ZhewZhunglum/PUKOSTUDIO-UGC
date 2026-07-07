@@ -95,6 +95,21 @@ type AITestResult = {
   error: string | null;
 } | null;
 
+// ── Suppression list types ─────────────────────────────────────────────────
+type Suppression = {
+  id: string;
+  email: string;
+  reason: "bounced" | "complained" | "unsubscribed" | "manual";
+  created_at: string;
+};
+
+const SUPPRESSION_REASON_MAP: Record<Suppression["reason"], string> = {
+  bounced: "退信",
+  complained: "投诉",
+  unsubscribed: "退订",
+  manual: "手动",
+};
+
 // ── Email account types ────────────────────────────────────────────────────
 type ProviderType = "ses" | "sendgrid" | "smtp";
 
@@ -140,7 +155,7 @@ function SettingsPageContent() {
   const searchParams = useSearchParams();
   const initialTab = searchParams.get("tab") ?? "email";
   const [activeTab, setActiveTab] = useState<string>(
-    ["email", "woto", "ai", "team"].includes(initialTab) ? initialTab : "email"
+    ["email", "woto", "ai", "suppression", "team"].includes(initialTab) ? initialTab : "email"
   );
 
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
@@ -162,6 +177,12 @@ function SettingsPageContent() {
   const [wotoTesting, setWotoTesting] = useState<"sandbox" | "production" | null>(null);
   const [wotoTestResult, setWotoTestResult] = useState<WotoTestResult>(null);
   const [wotoMessage, setWotoMessage] = useState<string | null>(null);
+
+  // Suppression list state
+  const [suppressions, setSuppressions] = useState<Suppression[]>([]);
+  const [suppressionEmail, setSuppressionEmail] = useState("");
+  const [suppressionBusy, setSuppressionBusy] = useState(false);
+  const [suppressionMessage, setSuppressionMessage] = useState<string | null>(null);
 
   // AI settings state
   const [aiSettings, setAISettings] = useState<AISettings | null>(null);
@@ -296,10 +317,47 @@ function SettingsPageContent() {
     }
   };
 
+  const fetchSuppressions = async () => {
+    try {
+      const response = await api.get<Suppression[]>("/suppressions");
+      setSuppressions(response.data);
+    } catch {
+      // non-critical
+    }
+  };
+
+  const handleAddSuppression = async () => {
+    const email = suppressionEmail.trim();
+    if (!email) return;
+    setSuppressionBusy(true);
+    setSuppressionMessage(null);
+    try {
+      const response = await api.post<Suppression[]>("/suppressions", { email });
+      setSuppressions(response.data);
+      setSuppressionEmail("");
+      setSuppressionMessage("已加入抑制名单");
+    } catch {
+      setSuppressionMessage("添加失败，请确认邮箱格式正确");
+    } finally {
+      setSuppressionBusy(false);
+    }
+  };
+
+  const handleRemoveSuppression = async (id: string) => {
+    if (!confirm("移出抑制名单后，该地址将重新可以接收邮件。确定吗？")) return;
+    try {
+      await api.delete(`/suppressions/${id}`);
+      await fetchSuppressions();
+    } catch {
+      setSuppressionMessage("移除失败，请稍后重试");
+    }
+  };
+
   useEffect(() => {
     void fetchAccounts();
     void fetchWotoSettings();
     void fetchAISettings();
+    void fetchSuppressions();
   }, []);
 
   const updateForm = (patch: Partial<FormState>) => {
@@ -448,6 +506,7 @@ function SettingsPageContent() {
             <TabsTrigger value="email">邮箱账号</TabsTrigger>
             <TabsTrigger value="woto">Woto API</TabsTrigger>
             <TabsTrigger value="ai">AI 配置</TabsTrigger>
+            <TabsTrigger value="suppression">抑制名单</TabsTrigger>
             <TabsTrigger value="team">团队</TabsTrigger>
           </TabsList>
 
@@ -1081,6 +1140,66 @@ function SettingsPageContent() {
                   </div>
                 );
               })}
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="suppression" className="space-y-4">
+            <Card className="space-y-4 p-6">
+              <div>
+                <h3 className="text-lg font-semibold">抑制名单</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  退信、被投诉、退订的地址会自动加入，系统不会再向这些地址发送任何邮件。
+                  这是保护发信域名信誉、提高送达率的核心机制。
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-[260px] flex-1">
+                  <Label>手动添加邮箱</Label>
+                  <Input
+                    type="email"
+                    value={suppressionEmail}
+                    onChange={(e) => setSuppressionEmail(e.target.value)}
+                    placeholder="do-not-email@example.com"
+                  />
+                </div>
+                <Button onClick={handleAddSuppression} disabled={suppressionBusy || !suppressionEmail.trim()}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  加入名单
+                </Button>
+              </div>
+
+              {suppressionMessage && (
+                <p className="text-sm text-muted-foreground">{suppressionMessage}</p>
+              )}
+
+              {suppressions.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  名单为空。退信/投诉/退订发生时会自动写入。
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {suppressions.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                    >
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="font-mono text-sm">{item.email}</span>
+                        <Badge variant={item.reason === "manual" ? "outline" : "destructive"}>
+                          {SUPPRESSION_REASON_MAP[item.reason] || item.reason}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(item.created_at).toLocaleString("zh-CN")}
+                        </span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => handleRemoveSuppression(item.id)}>
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           </TabsContent>
 

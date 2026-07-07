@@ -296,6 +296,14 @@ async def send_reply(
     if not influencer.email:
         raise BadRequestException("Influencer does not have an email address")
 
+    from app.services import suppression_service
+
+    if await suppression_service.is_suppressed(db, team_id, influencer.email):
+        raise BadRequestException(
+            "该收件人在抑制名单中（曾退信/投诉/退订），已阻止发送。"
+            "如确认无误，可在设置中将其移出抑制名单后重试。"
+        )
+
     account: EmailAccount | None = None
     if payload.email_account_id:
         account_result = await db.execute(

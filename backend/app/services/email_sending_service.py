@@ -130,16 +130,28 @@ async def update_message_status(
             )
             db.add(event)
 
-    if status in {EmailStatus.bounced, EmailStatus.complained} and msg.campaign_id:
-        enrollment = await db.execute(
-            select(CampaignInfluencer).where(
-                CampaignInfluencer.campaign_id == msg.campaign_id,
-                CampaignInfluencer.influencer_id == msg.influencer_id,
-            )
+    if status in {EmailStatus.bounced, EmailStatus.complained}:
+        # Auto-suppress the address so we stop mailing it (protects reputation).
+        from app.models.suppression import SuppressionReason
+        from app.services import suppression_service
+
+        reason = (
+            SuppressionReason.complained
+            if status == EmailStatus.complained
+            else SuppressionReason.bounced
         )
-        campaign_influencer = enrollment.scalar_one_or_none()
-        if campaign_influencer:
-            campaign_influencer.status = CampaignInfluencerStatus.bounced
+        await suppression_service.add_suppression(db, msg.team_id, msg.to_address, reason)
+
+        if msg.campaign_id:
+            enrollment = await db.execute(
+                select(CampaignInfluencer).where(
+                    CampaignInfluencer.campaign_id == msg.campaign_id,
+                    CampaignInfluencer.influencer_id == msg.influencer_id,
+                )
+            )
+            campaign_influencer = enrollment.scalar_one_or_none()
+            if campaign_influencer:
+                campaign_influencer.status = CampaignInfluencerStatus.bounced
 
     await db.flush()
     return msg
