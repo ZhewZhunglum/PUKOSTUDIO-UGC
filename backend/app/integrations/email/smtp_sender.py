@@ -15,7 +15,7 @@ from app.integrations.email.base import EmailSender, build_mime_root
 logger = logging.getLogger(__name__)
 
 
-def _detect_proxy() -> dict | None:
+def _detect_proxy(target_host: str | None = None) -> dict | None:
     """Detect the best available outbound proxy for SMTP.
 
     Resolution order:
@@ -25,8 +25,18 @@ def _detect_proxy() -> dict | None:
       4. Hardcoded SOCKS5 localhost:1080 probe (common for VPN proxy mode)
 
     Returns a dict with keys 'type' ('socks5' | 'http'), 'host', 'port',
-    or None when no proxy is detected.
+    or None when no proxy is detected. Loopback/NO_PROXY targets never use a
+    proxy — routing localhost through an HTTP proxy breaks local relays.
     """
+    if target_host:
+        host = target_host.strip().lower()
+        if host in ("localhost", "127.0.0.1", "::1") or host.startswith("127."):
+            return None
+        try:
+            if urllib.request.proxy_bypass(host):  # honors NO_PROXY / system bypass
+                return None
+        except Exception:
+            pass
     # 1. Explicit SOCKS5
     for var in ("ALL_PROXY", "all_proxy"):
         val = os.environ.get(var, "")
@@ -128,7 +138,10 @@ class SMTPSender(EmailSender):
             for key, value in headers.items():
                 msg[key] = value
 
-        proxy = _detect_proxy()
+        proxy = _detect_proxy(self.host)
+        # Auth is optional: internal/local relays commonly run without it, and
+        # logging in with empty credentials errors out on such servers.
+        has_auth = bool(self.username and self.password)
         try:
             if proxy:
                 logger.debug(
@@ -144,7 +157,8 @@ class SMTPSender(EmailSender):
                     sock=sock,
                 )
                 await smtp.connect()
-                await smtp.login(self.username, self.password)
+                if has_auth:
+                    await smtp.login(self.username, self.password)
                 await smtp.send_message(msg)
                 try:
                     await smtp.quit()
@@ -157,8 +171,8 @@ class SMTPSender(EmailSender):
                     msg,
                     hostname=self.host,
                     port=self.port,
-                    username=self.username,
-                    password=self.password,
+                    username=self.username if has_auth else None,
+                    password=self.password if has_auth else None,
                     start_tls=self.use_tls,
                     cert_bundle=certifi.where(),
                 )
@@ -170,7 +184,7 @@ class SMTPSender(EmailSender):
 
     async def verify_connection(self) -> bool:
         try:
-            proxy = _detect_proxy()
+            proxy = _detect_proxy(self.host)
             if proxy:
                 sock = await _open_proxied_socket(self.host, self.port, proxy)
                 smtp = aiosmtplib.SMTP(
@@ -187,7 +201,8 @@ class SMTPSender(EmailSender):
                     cert_bundle=certifi.where(),
                 )
             await smtp.connect()
-            await smtp.login(self.username, self.password)
+            if self.username and self.password:
+                await smtp.login(self.username, self.password)
             try:
                 await smtp.quit()
             except Exception:
