@@ -17,9 +17,16 @@ class EmailAccountUpdate(BaseModel):
     provider_config: dict | None = None
     daily_limit: int | None = None
     is_active: bool | None = None
-    # Branded signature inputs (signature_html is rendered server-side from these).
+    # Branded signature inputs.
+    # signature_mode="structured" (default): signature_html is rendered
+    # server-side from signature_content/logo/brand_color/social_links (as
+    # today, unchanged). signature_mode="custom": the caller writes
+    # signature_html directly (user-authored via the rich-text editor); it is
+    # sanitized and stored as-is, bypassing server rendering.
+    signature_mode: str | None = None
     signature_enabled: bool | None = None
     signature_content: str | None = None
+    signature_html: str | None = None
     signature_logo_attachment_id: uuid.UUID | None = None
     brand_color: str | None = None
     social_links: dict | None = None
@@ -36,6 +43,7 @@ class EmailAccountResponse(BaseModel):
     is_active: bool
     health_status: str
     signature_enabled: bool
+    signature_mode: str
     signature_content: str | None
     signature_html: str | None
     signature_logo_attachment_id: uuid.UUID | None

@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 
 from app.integrations.email.base import build_mime_root
-from app.integrations.email.manager import inject_tracking, select_best_account
+from app.integrations.email.manager import (
+    finalize_html_for_send,
+    inject_tracking,
+    select_best_account,
+    unsubscribe_url,
+)
 
 
 def make_account(
@@ -46,6 +51,49 @@ def test_inject_tracking_appends_pixel():
 
     assert "/api/v1/track/open/1234.png" in result
     assert result.endswith("</body></html>")
+
+
+def test_inject_tracking_honors_track_path():
+    result = inject_tracking("<body></body>", "1234", "http://x", track_path="client-track")
+
+    assert "/api/v1/client-track/open/1234.png" in result
+
+
+def test_unsubscribe_url_default_track_path_unchanged():
+    assert unsubscribe_url("http://x", "m1") == "http://x/api/v1/track/unsubscribe/m1"
+
+
+def test_unsubscribe_url_custom_track_path():
+    assert (
+        unsubscribe_url("http://x", "m1", track_path="client-track")
+        == "http://x/api/v1/client-track/unsubscribe/m1"
+    )
+
+
+def test_finalize_inlines_style_block():
+    html = '<html><head><style>.foo{color:red}</style></head><body><p class="foo">hi</p></body></html>'
+
+    result = finalize_html_for_send(html)
+
+    assert "<style>" not in result
+    assert 'style="color:red"' in result
+
+
+def test_finalize_is_idempotent():
+    html = '<html><head><style>.foo{color:red}</style></head><body><p class="foo">hi</p></body></html>'
+
+    once = finalize_html_for_send(html)
+    twice = finalize_html_for_send(once)
+
+    assert once == twice
+
+
+def test_finalize_preserves_existing_inline_styles():
+    html = '<p style="color:blue">hi</p>'
+
+    result = finalize_html_for_send(html)
+
+    assert 'color:blue' in result
 
 
 def test_build_mime_root_without_attachments_is_alternative():
