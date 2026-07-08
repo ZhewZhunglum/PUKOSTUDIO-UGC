@@ -6,9 +6,11 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.html_sanitize import sanitize_html
 from app.core.utils import strip_html
 from app.integrations.email.manager import (
     apply_signature,
+    finalize_html_for_send,
     get_email_sender,
     select_best_account,
 )
@@ -346,7 +348,11 @@ async def send_reply(
     reference_ids = [message.message_id for message in history if message.message_id]
 
     subject = payload.subject or _reply_subject(latest_message.subject if latest_message else None)
-    body_text = payload.body_text or strip_html(payload.body_html)
+    # Reply bodies come from the rich-text editor (AI draft edits or manual
+    # compose) and were never sanitized before — sanitize at this API boundary
+    # since it's the single choke point both paths flow through.
+    body_html = sanitize_html(payload.body_html)
+    body_text = payload.body_text or strip_html(body_html)
 
     headers: dict[str, str] | None = None
     if reference_ids:
@@ -361,7 +367,11 @@ async def send_reply(
         db, team_id, payload.attachment_ids
     )
 
-    signed_html, signed_text = apply_signature(payload.body_html, body_text, account)
+    signed_html, signed_text = apply_signature(body_html, body_text, account)
+    # Inline CSS as the last transform before the network call — see
+    # finalize_html_for_send docstring. The stored message.body_html below
+    # stays pre-inline (rendering-only transform, no semantic change).
+    final_html = finalize_html_for_send(signed_html)
 
     sender = get_email_sender(account)
     message = EmailMessage(
@@ -387,7 +397,7 @@ async def send_reply(
         from_address=f"{account.display_name or 'Team'} <{account.email_address}>",
         to_address=influencer.email,
         subject=subject,
-        html_body=signed_html,
+        html_body=final_html,
         text_body=signed_text,
         headers=headers,
         attachments=attachment_payloads or None,

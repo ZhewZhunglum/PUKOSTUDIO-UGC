@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.html_sanitize import sanitize_html
 from app.models.template import EmailTemplate, TemplateCategory
 from app.schemas.template import TemplateCreate, TemplateUpdate
 
@@ -48,14 +49,15 @@ async def get_template(
 async def create_template(
     db: AsyncSession, team_id: uuid.UUID, data: TemplateCreate
 ) -> EmailTemplate:
+    body_html = sanitize_html(data.body_html)
     # Auto-extract variables from template
-    variables = extract_variables(data.subject + " " + data.body_html)
+    variables = extract_variables(data.subject + " " + body_html)
 
     template = EmailTemplate(
         team_id=team_id,
         name=data.name,
         subject=data.subject,
-        body_html=data.body_html,
+        body_html=body_html,
         body_text=data.body_text,
         category=TemplateCategory(data.category),
         language=data.language,
@@ -79,6 +81,8 @@ async def update_template(
             setattr(template, field, TemplateCategory(value))
         elif field == "is_library":
             continue
+        elif field == "body_html" and value is not None:
+            setattr(template, field, sanitize_html(value))
         else:
             setattr(template, field, value)
 

@@ -20,6 +20,11 @@ class EmailHealthStatus(str, enum.Enum):
     suspended = "suspended"
 
 
+class SignatureMode(str, enum.Enum):
+    structured = "structured"  # signature_content is plain text, server-composed into signature_html
+    custom = "custom"  # signature_html is user-authored rich HTML (sanitized), stored as-is
+
+
 class EmailAccount(BaseModel):
     __tablename__ = "email_accounts"
 
@@ -45,6 +50,9 @@ class EmailAccount(BaseModel):
     # tagline); signature_html is the server-rendered canonical block used at
     # send time (single source of truth), composed from content + logo + links.
     signature_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    signature_mode: Mapped[SignatureMode] = mapped_column(
+        Enum(SignatureMode), default=SignatureMode.structured, nullable=False
+    )
     signature_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     signature_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     signature_logo_attachment_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -7,9 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.database import get_db
 from app.core.exceptions import NotFoundException
+from app.core.html_sanitize import sanitize_html
 from app.dependencies import get_current_user
 from app.integrations.email.manager import render_signature_html
-from app.models.email_account import EmailAccount, EmailHealthStatus, EmailProviderType
+from app.models.email_account import (
+    EmailAccount,
+    EmailHealthStatus,
+    EmailProviderType,
+    SignatureMode,
+)
 from app.models.user import User
 from app.schemas.email import (
     EmailAccountCreate,
@@ -103,13 +109,25 @@ async def update_email_account(
     account = await _get_account(db, current_user.team_id, account_id)
 
     update_fields = data.model_dump(exclude_unset=True)
+    effective_mode = update_fields.get("signature_mode", account.signature_mode.value)
+
     for field, value in update_fields.items():
         if field == "provider_config":
             value = _sanitize_provider_config(value)
+        elif field == "signature_mode":
+            value = SignatureMode(value)
+        elif field == "signature_html" and effective_mode == SignatureMode.custom.value:
+            # Custom mode: the caller's rich-text HTML is sanitized and stored
+            # directly, bypassing render_signature_html's plain-text escaping.
+            value = sanitize_html(value)
         setattr(account, field, value)
 
-    # Re-render the canonical signature HTML whenever any signature input changed.
-    if _SIGNATURE_INPUT_FIELDS & update_fields.keys():
+    # Structured mode (default): re-render the canonical signature HTML
+    # whenever any structured input changed. Skipped entirely in custom mode
+    # so the freshly-sanitized signature_html set above isn't clobbered.
+    if effective_mode == SignatureMode.structured.value and (
+        _SIGNATURE_INPUT_FIELDS & update_fields.keys()
+    ):
         account.signature_html = render_signature_html(
             content=account.signature_content,
             logo_url=_logo_url(account.signature_logo_attachment_id),

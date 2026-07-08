@@ -33,27 +33,31 @@ async def upload_file(
     )
 
 
+_PUBLIC_ATTACHMENT_PURPOSES = [AttachmentPurpose.signature_logo, AttachmentPurpose.snippet_asset]
+
+
 @router.get("/public/{attachment_id}")
-async def serve_public_logo(
+async def serve_public_attachment(
     attachment_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Unauthenticated serve for signature logos only.
+    """Unauthenticated serve for inline email images (signature logos + rich-text
+    editor images embedded in template/reply bodies via the snippet_asset purpose).
 
-    Signature logos are embedded as <img src> in outbound emails, so recipient
-    mail clients must fetch them without auth. Access is guarded by the
-    unguessable UUID and restricted to the signature_logo purpose; sensitive
-    email attachments are NOT served here (use the authed route below).
+    Both are embedded as <img src> in outbound emails, so recipient mail clients
+    must fetch them without auth. Access is guarded by the unguessable UUID and
+    restricted to these two purposes; sensitive email attachments (purpose
+    "email") are NOT served here (use the authed route below).
     """
     result = await db.execute(
         select(EmailAttachment).where(
             EmailAttachment.id == attachment_id,
-            EmailAttachment.purpose == AttachmentPurpose.signature_logo,
+            EmailAttachment.purpose.in_(_PUBLIC_ATTACHMENT_PURPOSES),
         )
     )
     attachment = result.scalar_one_or_none()
     if not attachment:
-        raise NotFoundException("Logo not found")
+        raise NotFoundException("Image not found")
     return FileResponse(
         attachment_service.attachment_path(attachment),
         media_type=attachment.content_type,

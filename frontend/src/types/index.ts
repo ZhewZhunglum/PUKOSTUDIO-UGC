@@ -279,6 +279,8 @@ export interface EmailAccount {
   is_active: boolean;
   health_status: "healthy" | "degraded" | "suspended";
   signature_enabled: boolean;
+  signature_mode: "structured" | "custom";
+  signature_content: string | null;
   signature_html: string | null;
   signature_logo_attachment_id: string | null;
   brand_color: string | null;

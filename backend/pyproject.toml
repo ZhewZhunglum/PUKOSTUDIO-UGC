@@ -31,6 +31,9 @@ dependencies = [
     # Data processing
     "openpyxl>=3.1.0",
     "python-dateutil>=2.9.0",
+    # HTML processing (rich-text editor pipeline)
+    "nh3>=0.3.0",
+    "premailer>=3.10.0",
     # Utils
     "pydantic[email]>=2.8.0",
     # Scraping

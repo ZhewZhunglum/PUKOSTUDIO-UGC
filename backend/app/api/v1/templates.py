@@ -143,10 +143,17 @@ async def delete_template(
 
 
 @router.post("/preview", response_model=TemplatePreviewResponse)
-async def preview_template(data: TemplatePreviewRequest):
+async def preview_template(
+    data: TemplatePreviewRequest,
+    finalize: bool = Query(False, description="Run CSS-inlining to preview final send-ready HTML"),
+):
     subject, body = template_service.render_template(
         data.subject, data.body_html, data.variables
     )
+    if finalize:
+        from app.integrations.email.manager import finalize_html_for_send
+
+        body = finalize_html_for_send(body)
     return {"subject": subject, "body_html": body}
 
 

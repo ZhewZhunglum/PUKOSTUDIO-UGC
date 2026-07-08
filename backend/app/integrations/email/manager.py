@@ -69,22 +69,25 @@ def select_best_account(accounts: list[EmailAccount], to_domain: str | None = No
     return eligible[0]
 
 
-def unsubscribe_url(base_url: str, message_id: str) -> str:
-    return f"{base_url}/api/v1/track/unsubscribe/{message_id}"
+def unsubscribe_url(base_url: str, message_id: str, track_path: str = "track") -> str:
+    # track_path lets a parallel pipeline (e.g. B2B client outreach) reuse this
+    # builder under its own route prefix ("client-track") without touching the
+    # influencer pipeline's default behavior.
+    return f"{base_url}/api/v1/{track_path}/unsubscribe/{message_id}"
 
 
-def unsubscribe_headers(base_url: str, message_id: str) -> dict[str, str]:
+def unsubscribe_headers(base_url: str, message_id: str, track_path: str = "track") -> dict[str, str]:
     """RFC 8058 one-click unsubscribe headers — improve inbox placement."""
-    url = unsubscribe_url(base_url, message_id)
+    url = unsubscribe_url(base_url, message_id, track_path)
     return {
         "List-Unsubscribe": f"<{url}>",
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     }
 
 
-def inject_unsubscribe(html_body: str, message_id: str, base_url: str) -> str:
+def inject_unsubscribe(html_body: str, message_id: str, base_url: str, track_path: str = "track") -> str:
     """Append a visible unsubscribe footer (compliance + deliverability)."""
-    url = unsubscribe_url(base_url, message_id)
+    url = unsubscribe_url(base_url, message_id, track_path)
     footer = (
         '<div style="margin-top:16px;font-size:12px;color:#9ca3af;'
         'font-family:Arial,Helvetica,sans-serif">'
@@ -172,10 +175,31 @@ def apply_signature(
     return new_html, new_text
 
 
-def inject_tracking(html_body: str, message_id: str, base_url: str) -> str:
+def inject_tracking(html_body: str, message_id: str, base_url: str, track_path: str = "track") -> str:
     """Inject open tracking pixel into HTML body."""
-    pixel = f'<img src="{base_url}/api/v1/track/open/{message_id}.png" width="1" height="1" style="display:none" />'
+    pixel = f'<img src="{base_url}/api/v1/{track_path}/open/{message_id}.png" width="1" height="1" style="display:none" />'
 
     if "</body>" in html_body:
         return html_body.replace("</body>", f"{pixel}</body>")
     return html_body + pixel
+
+
+def finalize_html_for_send(html: str) -> str:
+    """Inline CSS (style blocks / classes) into element style= attributes.
+
+    MUST run last, immediately before sender.send(), after signature/
+    unsubscribe/tracking injection — Gmail, Outlook, and Apple Mail strip or
+    ignore <style> blocks and many class-based selectors, so WYSIWYG output
+    (which may carry a <style> block from pasted rich content) needs inlining
+    to render consistently. Idempotent: running it twice on already-inlined
+    HTML is a safe no-op.
+    """
+    from premailer import Premailer
+
+    return Premailer(
+        html,
+        remove_classes=False,
+        keep_style_tags=False,
+        strip_important=False,
+        cssutils_logging_level="CRITICAL",
+    ).transform()
