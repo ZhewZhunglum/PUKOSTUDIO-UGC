@@ -45,11 +45,31 @@ async def get_campaign(
     return campaign
 
 
+MAX_CAMPAIGN_STEPS = 5
+
+
+def _validate_steps(steps: list) -> None:
+    """Multi-step sequence rules: 1..MAX steps, consecutive orders starting at
+    1, the initial step sends immediately, follow-ups need a positive delay."""
+    if not steps:
+        raise BadRequestException("Campaign must have at least one step")
+    if len(steps) > MAX_CAMPAIGN_STEPS:
+        raise BadRequestException(f"最多支持 {MAX_CAMPAIGN_STEPS} 个步骤")
+    orders = sorted(s.step_order for s in steps)
+    if orders != list(range(1, len(steps) + 1)):
+        raise BadRequestException("步骤顺序必须从 1 开始连续递增")
+    by_order = {s.step_order: s for s in steps}
+    if (by_order[1].delay_days or 0) != 0:
+        raise BadRequestException("首发步骤的延迟必须为 0 天")
+    for order in orders[1:]:
+        if (by_order[order].delay_days or 0) < 1:
+            raise BadRequestException("跟进步骤的延迟至少为 1 天")
+
+
 async def create_campaign(
     db: AsyncSession, team_id: uuid.UUID, data: CampaignCreate
 ) -> Campaign:
-    if len(data.steps) != 1:
-        raise BadRequestException("Campaign MVP supports exactly one initial step")
+    _validate_steps(data.steps)
 
     campaign = Campaign(
         team_id=team_id,
@@ -105,8 +125,6 @@ async def start_campaign(
 
     if not campaign.steps:
         raise BadRequestException("Campaign must have at least one step")
-    if len(campaign.steps) != 1:
-        raise BadRequestException("Only one campaign step is supported in the current MVP")
 
     # Count enrolled influencers
     count = await db.execute(
@@ -346,7 +364,43 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: uuid.UUID) -> dict:
     total_enrolled = ci_row.total_enrolled or 0
     total_replied = ci_row.total_replied or 0
 
+    # A/B subject breakdown (present only when messages carry an ab_variant).
+    _SENT_STATUSES = [
+        EmailStatus.sent, EmailStatus.delivered, EmailStatus.opened, EmailStatus.clicked,
+    ]
+    _OPENED_STATUSES = [EmailStatus.opened, EmailStatus.clicked]
+    variant_col = EmailMessage.metadata_["ab_variant"].astext
+    variant_rows = await db.execute(
+        select(
+            variant_col.label("variant"),
+            func.count(EmailMessage.id)
+            .filter(EmailMessage.status.in_(_SENT_STATUSES))
+            .label("sent"),
+            func.count(EmailMessage.id)
+            .filter(EmailMessage.status.in_(_OPENED_STATUSES))
+            .label("opened"),
+        )
+        .where(
+            EmailMessage.campaign_id == campaign_id,
+            EmailMessage.direction == EmailDirection.outbound,
+            variant_col.is_not(None),
+        )
+        .group_by(variant_col)
+    )
+    ab_test = {
+        row.variant: {
+            "sent": row.sent or 0,
+            "opened": row.opened or 0,
+            "open_rate": round(row.opened / row.sent * 100, 1) if row.sent else 0,
+        }
+        for row in variant_rows.all()
+    }
+    # Only surface the block when a real experiment ran (both variants present).
+    if set(ab_test.keys()) != {"A", "B"}:
+        ab_test = None
+
     return {
+        "ab_test": ab_test,
         "total_enrolled": total_enrolled,
         "emails_sent": sent,
         "emails_delivered": delivered,
