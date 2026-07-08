@@ -23,6 +23,7 @@ def send_campaign_batch(campaign_id: str, team_id: str, batch_size: int | None =
         CampaignStatus,
     )
     from app.models.influencer import Influencer
+    from app.services.sending_rules import seconds_until_send_window
 
     effective_batch_size = batch_size if batch_size is not None else settings.email_batch_size
     db = get_sync_session()
@@ -34,6 +35,23 @@ def send_campaign_batch(campaign_id: str, team_id: str, batch_size: int | None =
 
         if not campaign or campaign.status != CampaignStatus.active:
             logger.info(f"Campaign {campaign_id} is not active, skipping batch")
+            return
+
+        # Honor the campaign's send window (schedule_config.send_window): outside
+        # it, re-schedule this batch for when the window opens in the configured
+        # timezone instead of dispatching mail at 3am recipient time.
+        window_delay = seconds_until_send_window(
+            campaign.schedule_config, datetime.now(timezone.utc)
+        )
+        if window_delay > 0:
+            logger.info(
+                "Campaign %s outside send window; retrying batch in %ss",
+                campaign_id, window_delay,
+            )
+            send_campaign_batch.apply_async(
+                args=[campaign_id, team_id, effective_batch_size],
+                countdown=window_delay,
+            )
             return
 
         # Get queued influencers
@@ -121,8 +139,13 @@ def send_single_email(
     influencer_id: str,
     to_email: str,
     influencer_name: str,
+    step_order: int | None = None,
 ):
-    """Send a single email for a campaign."""
+    """Send one campaign step's email to one influencer.
+
+    ``step_order`` selects the sequence step (None = the initial step); the
+    batch task dispatches step 1 and process_followups dispatches later steps.
+    """
     from email_validator import EmailNotValidError, validate_email
 
     from app.config import settings
@@ -147,6 +170,7 @@ def send_single_email(
     from app.models.suppression import EmailSuppression, SuppressionReason
     from app.models.template import EmailTemplate
     from app.services import suppression_service
+    from app.services.sending_rules import choose_ab_subject
     from app.services.template_service import build_influencer_variables, render_template
 
     # Statuses that mean "this influencer already received the campaign email".
@@ -166,12 +190,31 @@ def send_single_email(
         if not ci:
             return
 
-        # Idempotency: if this influencer already has a sent (or further) outbound
-        # message for this campaign, do not send again. Protects against Celery
-        # redelivery, double dispatch, and re-runs after a resume.
+        # Resolve the sequence step to send (None = the initial step).
+        step_query = select(CampaignStep).where(
+            CampaignStep.campaign_id == uuid.UUID(campaign_id)
+        )
+        if step_order is not None:
+            step_query = step_query.where(CampaignStep.step_order == step_order)
+        step = db.execute(
+            step_query.order_by(CampaignStep.step_order)
+        ).scalars().first()
+
+        if not step:
+            ci.status = CampaignInfluencerStatus.bounced
+            logger.error(
+                "No step (order=%s) found for campaign %s", step_order, campaign_id
+            )
+            db.commit()
+            return
+
+        # Per-step idempotency: if this influencer already has a sent (or
+        # further) outbound message for THIS step, do not send again. Protects
+        # against Celery redelivery, double dispatch, and re-runs after a resume
+        # — while still allowing later follow-up steps to send.
         already = db.execute(
             select(EmailMessage.id).where(
-                EmailMessage.campaign_id == uuid.UUID(campaign_id),
+                EmailMessage.campaign_step_id == step.id,
                 EmailMessage.influencer_id == uuid.UUID(influencer_id),
                 EmailMessage.direction == EmailDirection.outbound,
                 EmailMessage.status.in_(_ALREADY_SENT),
@@ -179,8 +222,8 @@ def send_single_email(
         ).first()
         if already:
             logger.info(
-                "Influencer %s already emailed for campaign %s; skipping duplicate send",
-                influencer_id, campaign_id,
+                "Influencer %s already got step %s of campaign %s; skipping duplicate",
+                influencer_id, step.step_order, campaign_id,
             )
             return
 
@@ -243,19 +286,6 @@ def send_single_email(
             _skip_permanently(f"收件人在抑制名单中（{suppression.reason.value}）", terminal)
             return
 
-        # Get first campaign step (MVP: single step)
-        step = db.execute(
-            select(CampaignStep)
-            .where(CampaignStep.campaign_id == uuid.UUID(campaign_id))
-            .order_by(CampaignStep.step_order)
-        ).scalars().first()
-
-        if not step:
-            ci.status = CampaignInfluencerStatus.bounced
-            logger.error(f"No steps found for campaign {campaign_id}")
-            db.commit()
-            return
-
         # Get template
         template = db.execute(
             select(EmailTemplate).where(EmailTemplate.id == step.template_id)
@@ -289,8 +319,18 @@ def send_single_email(
             select(Influencer).where(Influencer.id == uuid.UUID(influencer_id))
         ).scalar_one_or_none()
         variables = build_influencer_variables(influencer, fallback_name=influencer_name)
+
+        # A/B subject test: when the step defines an alternative subject
+        # (condition.ab_subject_b), split deterministically 50/50 by influencer
+        # id so retries always pick the same variant. Steps without an
+        # experiment record no variant, keeping the stats comparison clean.
+        subject_b = (step.condition or {}).get("ab_subject_b")
+        has_experiment = bool(subject_b and str(subject_b).strip())
+        raw_subject, ab_variant = choose_ab_subject(
+            influencer_id, template.subject, subject_b
+        )
         rendered_subject, rendered_body = render_template(
-            template.subject, template.body_html, variables
+            raw_subject, template.body_html, variables
         )
 
         # Append branded signature (before tracking) so the pixel stays last.
@@ -315,6 +355,8 @@ def send_single_email(
             metadata_={
                 "attempts": self.request.retries + 1,
                 "last_attempt_at": datetime.now(timezone.utc).isoformat(),
+                "step_order": step.step_order,
+                **({"ab_variant": ab_variant} if has_experiment else {}),
             },
         )
         db.add(message)
@@ -357,8 +399,22 @@ def send_single_email(
         ci.current_step = step.step_order
         ci.last_sent_at = datetime.now(timezone.utc)
 
+        # Sequence finished? Mark completed so follow-up scans skip this
+        # enrollment; a later reply still flips it to replied via intent mapping.
+        has_more = db.execute(
+            select(CampaignStep.id).where(
+                CampaignStep.campaign_id == uuid.UUID(campaign_id),
+                CampaignStep.step_order > step.step_order,
+            )
+        ).first()
+        if not has_more:
+            ci.status = CampaignInfluencerStatus.completed
+
         db.commit()
-        logger.info(f"Email sent to {to_email}, message_id: {message_id}")
+        logger.info(
+            f"Email sent to {to_email} (step {step.step_order}, variant {ab_variant}), "
+            f"message_id: {message_id}"
+        )
 
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {e}")
@@ -399,6 +455,90 @@ def send_single_email(
             if ci:
                 ci.status = CampaignInfluencerStatus.bounced
             db.commit()
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.email_tasks.process_followups")
+def process_followups():
+    """Dispatch due follow-up steps for active multi-step campaigns.
+
+    Runs periodically via beat. An enrollment gets the next step when it is
+    still in_progress (no reply/bounce/unsubscribe), the previous step was sent
+    long enough ago (next step's delay_days), and the campaign is inside its
+    send window. Per-step idempotency in send_single_email makes double
+    dispatch harmless.
+    """
+    from app.models.campaign import (
+        Campaign,
+        CampaignInfluencer,
+        CampaignInfluencerStatus,
+        CampaignStatus,
+        CampaignStep,
+    )
+    from app.models.influencer import Influencer
+    from app.services.sending_rules import next_due_step, seconds_until_send_window
+
+    now = datetime.now(timezone.utc)
+    db = get_sync_session()
+    dispatched = 0
+    try:
+        campaigns = db.execute(
+            select(Campaign).where(Campaign.status == CampaignStatus.active)
+        ).scalars().all()
+
+        for campaign in campaigns:
+            steps = db.execute(
+                select(CampaignStep).where(CampaignStep.campaign_id == campaign.id)
+            ).scalars().all()
+            if len(steps) <= 1:
+                continue  # single-step campaigns have no follow-ups
+            if seconds_until_send_window(campaign.schedule_config, now) > 0:
+                continue  # outside send window; next beat run retries
+
+            enrollments = db.execute(
+                select(CampaignInfluencer).where(
+                    CampaignInfluencer.campaign_id == campaign.id,
+                    CampaignInfluencer.status == CampaignInfluencerStatus.in_progress,
+                )
+            ).scalars().all()
+            if not enrollments:
+                continue
+
+            influencers_by_id = {
+                inf.id: inf
+                for inf in db.execute(
+                    select(Influencer).where(
+                        Influencer.id.in_([ci.influencer_id for ci in enrollments])
+                    )
+                ).scalars().all()
+            }
+
+            for ci in enrollments:
+                nxt = next_due_step(steps, ci.current_step, ci.last_sent_at, now)
+                if not nxt:
+                    continue
+                influencer = influencers_by_id.get(ci.influencer_id)
+                if not influencer or not influencer.email:
+                    ci.status = CampaignInfluencerStatus.bounced
+                    continue
+                send_single_email.apply_async(
+                    args=[
+                        str(ci.id),
+                        str(campaign.id),
+                        str(campaign.team_id),
+                        str(influencer.id),
+                        influencer.email,
+                        influencer.name,
+                    ],
+                    kwargs={"step_order": nxt.step_order},
+                    countdown=random.randint(5, 60),
+                )
+                dispatched += 1
+
+        db.commit()
+        if dispatched:
+            logger.info("Dispatched %s follow-up send(s)", dispatched)
     finally:
         db.close()
 
