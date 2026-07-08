@@ -232,6 +232,16 @@ const SOP_GOVERNANCE_FIELDS: Array<{
   },
 ];
 
+type ABVariantStats = { sent: number; opened: number; open_rate: number };
+
+type CampaignStats = {
+  total_enrolled?: number;
+  emails_sent?: number;
+  open_rate?: number;
+  reply_rate?: number;
+  ab_test?: Record<string, ABVariantStats> | null;
+};
+
 type SendProgress = {
   campaign_status: string;
   is_active: boolean;
@@ -246,7 +256,7 @@ export default function CampaignDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [stats, setStats] = useState<CampaignStats | null>(null);
   const [enrollments, setEnrollments] = useState<CampaignEnrollment[]>([]);
   const [playbookForm, setPlaybookForm] = useState(EMPTY_PLAYBOOK);
   const [savingPlaybook, setSavingPlaybook] = useState(false);
@@ -509,7 +519,7 @@ export default function CampaignDetailPage() {
                 <Badge>{campaign.status}</Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                当前 MVP 只发送一封首发外联邮件，活动创建后可手动处理回复。
+                支持多步自动跟进序列；达人回复、退信或退订后自动停止后续步骤。
               </p>
             </div>
           </div>
@@ -622,18 +632,44 @@ export default function CampaignDetailPage() {
           </Card>
 
           <Card className="space-y-4 p-6 lg:col-span-2">
-            <h3 className="text-lg font-semibold">首发步骤</h3>
+            <h3 className="text-lg font-semibold">邮件序列（{campaign.steps.length} 步）</h3>
             {campaign.steps.length === 0 ? (
               <p className="text-muted-foreground">当前没有配置发送步骤。</p>
             ) : (
               campaign.steps.map((step) => (
                 <div key={step.id} className="rounded-xl border p-4">
-                  <div className="font-medium">步骤 {step.step_order}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">
+                      第 {step.step_order} 封 · {step.step_order === 1 ? "首发" : `延迟 ${step.delay_days} 天跟进`}
+                    </span>
+                    {(step.condition as Record<string, string> | null)?.ab_subject_b && (
+                      <Badge variant="outline">A/B 主题测试</Badge>
+                    )}
+                  </div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    类型：{step.step_type}，模板 ID：{step.template_id}
+                    模板 ID：{step.template_id}
                   </div>
                 </div>
               ))
+            )}
+            {stats?.ab_test && (
+              <div className="rounded-xl border bg-muted/20 p-4">
+                <div className="mb-2 font-medium">A/B 主题测试结果</div>
+                <div className="grid grid-cols-2 gap-4">
+                  {(["A", "B"] as const).map((v) => {
+                    const data = stats.ab_test![v];
+                    return (
+                      <div key={v} className="rounded-lg border bg-background p-3">
+                        <div className="text-sm text-muted-foreground">{v} 版主题</div>
+                        <div className="text-xl font-bold">{data.open_rate}% 打开率</div>
+                        <div className="text-xs text-muted-foreground">
+                          发送 {data.sent} · 打开 {data.opened}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </Card>
         </div>

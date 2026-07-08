@@ -44,6 +44,26 @@ export default function NewCampaignPage() {
   const [templateId, setTemplateId] = useState("");
   const [selectedInfluencerIds, setSelectedInfluencerIds] = useState<string[]>([]);
 
+  // Sequence extras: optional A/B subject for the initial step and up to 4
+  // follow-up steps (template + delay in days, no reply required to stop —
+  // replies stop follow-ups automatically).
+  const [abSubjectB, setAbSubjectB] = useState("");
+  const [followUps, setFollowUps] = useState<{ template_id: string; delay_days: number }[]>([]);
+
+  // Optional send window (recipient-local hours).
+  const [windowEnabled, setWindowEnabled] = useState(false);
+  const [windowStart, setWindowStart] = useState("9");
+  const [windowEnd, setWindowEnd] = useState("17");
+  const [windowTz, setWindowTz] = useState("America/Los_Angeles");
+
+  const TIMEZONES = [
+    { value: "America/Los_Angeles", label: "美西 (Los Angeles)" },
+    { value: "America/New_York", label: "美东 (New York)" },
+    { value: "Europe/London", label: "英国 (London)" },
+    { value: "Asia/Shanghai", label: "中国 (Shanghai)" },
+    { value: "UTC", label: "UTC" },
+  ];
+
   useEffect(() => {
     Promise.all([
       api.get("/templates"),
@@ -91,9 +111,17 @@ export default function NewCampaignPage() {
     setSelectedInfluencerIds((cur) => cur.filter((id) => !ids.has(id)));
   };
 
+  const updateFollowUp = (index: number, patch: Partial<{ template_id: string; delay_days: number }>) => {
+    setFollowUps((cur) => cur.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  };
+
   const handleCreate = async () => {
     if (!name || !templateId) {
       setError("请填写活动名称并选择首封模板");
+      return;
+    }
+    if (followUps.some((f) => !f.template_id)) {
+      setError("每个跟进步骤都需要选择模板");
       return;
     }
     setLoading(true);
@@ -103,8 +131,29 @@ export default function NewCampaignPage() {
         name,
         description: description || null,
         campaign_type: campaignType,
+        schedule_config: windowEnabled
+          ? {
+              send_window: {
+                start_hour: Number(windowStart),
+                end_hour: Number(windowEnd),
+                timezone: windowTz,
+              },
+            }
+          : null,
         steps: [
-          { step_order: 1, step_type: "initial", template_id: templateId, delay_days: 0 },
+          {
+            step_order: 1,
+            step_type: "initial",
+            template_id: templateId,
+            delay_days: 0,
+            condition: abSubjectB.trim() ? { ab_subject_b: abSubjectB.trim() } : null,
+          },
+          ...followUps.map((f, i) => ({
+            step_order: i + 2,
+            step_type: "followup",
+            template_id: f.template_id,
+            delay_days: Math.max(1, f.delay_days),
+          })),
         ],
       });
       if (selectedInfluencerIds.length > 0) {
@@ -120,7 +169,7 @@ export default function NewCampaignPage() {
     }
   };
 
-  const stepLabels = ["基本信息", "首封模板", "入组达人"];
+  const stepLabels = ["基本信息", "邮件序列", "入组达人"];
 
   return (
     <AppLayout>
@@ -201,8 +250,57 @@ export default function NewCampaignPage() {
                 className="mt-1.5"
               />
             </div>
+            <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={windowEnabled}
+                  onChange={(e) => setWindowEnabled(e.target.checked)}
+                />
+                启用发送时间窗口（按收件人时区，只在指定时段发信）
+              </label>
+              {windowEnabled && (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <Label>开始（点）</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={windowStart}
+                      onChange={(e) => setWindowStart(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label>结束（点）</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={24}
+                      value={windowEnd}
+                      onChange={(e) => setWindowEnd(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label>时区</Label>
+                    <Select value={windowTz} onValueChange={(v) => v && setWindowTz(v)}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEZONES.map((tz) => (
+                          <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+            </div>
             <Button onClick={() => setStep(2)} disabled={!name.trim()}>
-              下一步：选择首封模板
+              下一步：配置邮件序列
             </Button>
           </Card>
         )}
@@ -210,7 +308,7 @@ export default function NewCampaignPage() {
         {/* Step 2: Template */}
         {step === 2 && (
           <Card className="space-y-4 p-6">
-            <h3 className="text-lg font-semibold">选择首封邮件模板</h3>
+            <h3 className="text-lg font-semibold">配置邮件序列：首封模板</h3>
             {templates.length === 0 ? (
               <div className="rounded-lg border border-dashed p-8 text-center">
                 <p className="text-sm text-muted-foreground">暂无模板，请先创建模板。</p>
@@ -243,6 +341,84 @@ export default function NewCampaignPage() {
                 ))}
               </div>
             )}
+            {templateId && (
+              <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
+                <div>
+                  <Label>A/B 主题测试（可选）</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    填写 B 版主题后，50% 达人收到模板原主题（A 版），50% 收到 B 版；活动详情可对比两版打开率。支持 {"{{first_name}}"} 等变量。
+                  </p>
+                  <Input
+                    className="mt-1.5"
+                    value={abSubjectB}
+                    onChange={(e) => setAbSubjectB(e.target.value)}
+                    placeholder="B 版主题，留空则不做 A/B 测试"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>自动跟进序列（可选）</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    未回复的达人将按延迟自动收到跟进邮件；一旦回复/退信/退订即停止。
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={followUps.length >= 4}
+                  onClick={() => setFollowUps((cur) => [...cur, { template_id: "", delay_days: 3 }])}
+                >
+                  + 添加跟进
+                </Button>
+              </div>
+              {followUps.length === 0 ? (
+                <p className="text-sm text-muted-foreground">未配置跟进，仅发送首封邮件。</p>
+              ) : (
+                followUps.map((f, i) => (
+                  <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border bg-background p-3">
+                    <span className="pb-2 text-sm font-medium">第 {i + 2} 封</span>
+                    <div className="w-28">
+                      <Label className="text-xs">延迟（天）</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={String(f.delay_days)}
+                        onChange={(e) => updateFollowUp(i, { delay_days: Number(e.target.value) || 1 })}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div className="min-w-[220px] flex-1">
+                      <Label className="text-xs">模板</Label>
+                      <Select
+                        value={f.template_id || undefined}
+                        onValueChange={(v) => v && updateFollowUp(i, { template_id: v })}
+                      >
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="选择跟进模板" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {templates.map((tmpl) => (
+                            <SelectItem key={tmpl.id} value={tmpl.id}>{tmpl.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFollowUps((cur) => cur.filter((_, x) => x !== i))}
+                    >
+                      移除
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+
             <div className="flex gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep(1)}>上一步</Button>
               <Button onClick={() => setStep(3)} disabled={!templateId}>下一步：入组达人</Button>
