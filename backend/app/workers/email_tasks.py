@@ -151,6 +151,7 @@ def send_single_email(
     from app.config import settings
     from app.integrations.email.manager import (
         apply_signature,
+        finalize_html_for_send,
         get_email_sender,
         inject_tracking,
         inject_unsubscribe,
@@ -366,6 +367,11 @@ def send_single_email(
         # Inject unsubscribe footer then the tracking pixel (pixel stays last).
         final_body = inject_unsubscribe(signed_body, str(message.id), settings.base_url)
         final_body = inject_tracking(final_body, str(message.id), settings.base_url)
+        # Inline CSS as the last transform before the network call, so
+        # WYSIWYG-authored <style> blocks/classes render consistently across
+        # Gmail/Outlook/Apple Mail. The stored message.body_html above stays
+        # pre-inline (rendering-only transform, no semantic content change).
+        final_body = finalize_html_for_send(final_body)
 
         # Send via provider with RFC 8058 one-click unsubscribe headers —
         # mailbox providers weigh these heavily for bulk-sender reputation.

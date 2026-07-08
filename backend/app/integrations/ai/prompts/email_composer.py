@@ -107,10 +107,11 @@ Rules:
 1. Replace any specific person's name that serves as a greeting (e.g. "Hi Jane", "Dear Sarah") with the appropriate {{variable}}.
 2. Replace placeholder brackets like [Name], [insert name], (Name), <<name>> with {{variable}}.
 3. If the subject line contains a name or niche, templatize those too.
-4. Wrap paragraphs in <p> tags. Preserve any existing HTML tags.
-5. Do NOT templatize brand names, product names, or campaign-specific content.
-6. If a value could be either first_name or name, prefer first_name for greetings.
-7. Return ONLY valid JSON, no explanation."""
+4. If the input body is plain text (no HTML tags present), wrap double-newline-separated paragraphs in <p> tags.
+5. If the input body already contains rich HTML structure (tables, styled <div>/<span>, <img>, lists), PRESERVE that structure exactly — do not flatten it to plain <p> tags, do not strip inline style attributes, do not remove <table>/<img> elements. Only perform the {{variable}} substitutions described in rules 1-3 within the existing markup.
+6. Do NOT templatize brand names, product names, or campaign-specific content.
+7. If a value could be either first_name or name, prefer first_name for greetings.
+8. Return ONLY valid JSON, no explanation."""
 
 CONVERT_TEMPLATE_USER = """Convert this email into a reusable template:
 

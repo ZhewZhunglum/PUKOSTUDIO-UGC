@@ -20,9 +20,11 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { HtmlEditor } from "@/components/editor/HtmlEditor";
 import api from "@/lib/api";
+import { uploadInlineImage } from "@/lib/uploads";
 import type { EmailAccount } from "@/types";
-import { CheckCircle2, ChevronDown, Loader2, Plus, TestTube, Trash2, ShieldCheck, Sparkles, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, FileSignature, Loader2, Plus, TestTube, Trash2, ShieldCheck, Sparkles, XCircle } from "lucide-react";
 
 const WOTO_PROD_URL = "https://api.wotohub.com/api-gateway";
 
@@ -95,6 +97,35 @@ type AITestResult = {
   error: string | null;
 } | null;
 
+// ── Signature types ─────────────────────────────────────────────────────────
+type SignatureMode = "structured" | "custom";
+
+type SignatureForm = {
+  mode: SignatureMode;
+  enabled: boolean;
+  content: string; // structured mode: plain-text block
+  html: string; // custom mode: rich HTML from the editor
+  logoAttachmentId: string | null;
+  logoPreviewUrl: string | null;
+  brandColor: string;
+  website: string;
+  instagram: string;
+  linkedin: string;
+};
+
+const EMPTY_SIGNATURE_FORM: SignatureForm = {
+  mode: "structured",
+  enabled: false,
+  content: "",
+  html: "",
+  logoAttachmentId: null,
+  logoPreviewUrl: null,
+  brandColor: "#d97706",
+  website: "",
+  instagram: "",
+  linkedin: "",
+};
+
 // ── Suppression list types ─────────────────────────────────────────────────
 type Suppression = {
   id: string;
@@ -164,6 +195,15 @@ function SettingsPageContent() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [message, setMessage] = useState<string | null>(null);
+
+  // Signature editor state (per-account dialog)
+  const [signatureAccountId, setSignatureAccountId] = useState<string | null>(null);
+  const [signatureForm, setSignatureForm] = useState<SignatureForm>(EMPTY_SIGNATURE_FORM);
+  const [signatureSaving, setSignatureSaving] = useState(false);
+  const [signaturePreviewHtml, setSignaturePreviewHtml] = useState<string>("");
+  const [signaturePreviewLoading, setSignaturePreviewLoading] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [signatureMessage, setSignatureMessage] = useState<string | null>(null);
 
   // Woto settings state
   const [wotoSettings, setWotoSettings] = useState<WotoSettings | null>(null);
@@ -488,6 +528,112 @@ function SettingsPageContent() {
     }
   };
 
+  const updateSignatureForm = (patch: Partial<SignatureForm>) => {
+    setSignatureForm((current) => ({ ...current, ...patch }));
+  };
+
+  const openSignatureEditor = (account: EmailAccount) => {
+    const links = account.social_links || {};
+    setSignatureAccountId(account.id);
+    setSignatureForm({
+      mode: account.signature_mode,
+      enabled: account.signature_enabled,
+      content: account.signature_content || "",
+      html: account.signature_mode === "custom" ? account.signature_html || "" : "",
+      logoAttachmentId: account.signature_logo_attachment_id,
+      logoPreviewUrl: account.signature_logo_attachment_id
+        ? `${api.defaults.baseURL}/uploads/public/${account.signature_logo_attachment_id}`
+        : null,
+      brandColor: account.brand_color || "#d97706",
+      website: links.website || "",
+      instagram: links.instagram || "",
+      linkedin: links.linkedin || "",
+    });
+    setSignaturePreviewHtml(account.signature_mode === "structured" ? account.signature_html || "" : "");
+    setSignatureMessage(null);
+  };
+
+  const closeSignatureEditor = () => {
+    setSignatureAccountId(null);
+    setSignatureForm(EMPTY_SIGNATURE_FORM);
+    setSignaturePreviewHtml("");
+  };
+
+  const handleLogoUpload = async (file: File) => {
+    setLogoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("purpose", "signature_logo");
+      const response = await api.post("/uploads", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      updateSignatureForm({
+        logoAttachmentId: response.data.id,
+        logoPreviewUrl: `${api.defaults.baseURL}/uploads/public/${response.data.id}`,
+      });
+    } catch (requestError) {
+      console.error(requestError);
+      setSignatureMessage("Logo 上传失败");
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
+  const refreshStructuredPreview = async () => {
+    setSignaturePreviewLoading(true);
+    try {
+      const response = await api.post("/email-accounts/signature/preview", {
+        signature_content: signatureForm.content || null,
+        signature_logo_attachment_id: signatureForm.logoAttachmentId,
+        brand_color: signatureForm.brandColor || null,
+        social_links: {
+          website: signatureForm.website || undefined,
+          instagram: signatureForm.instagram || undefined,
+          linkedin: signatureForm.linkedin || undefined,
+        },
+      });
+      setSignaturePreviewHtml(response.data.signature_html);
+    } catch (requestError) {
+      console.error(requestError);
+      setSignatureMessage("预览生成失败");
+    } finally {
+      setSignaturePreviewLoading(false);
+    }
+  };
+
+  const handleSaveSignature = async () => {
+    if (!signatureAccountId) return;
+    setSignatureSaving(true);
+    setSignatureMessage(null);
+    try {
+      const payload: Record<string, unknown> = {
+        signature_mode: signatureForm.mode,
+        signature_enabled: signatureForm.enabled,
+      };
+      if (signatureForm.mode === "structured") {
+        payload.signature_content = signatureForm.content;
+        payload.signature_logo_attachment_id = signatureForm.logoAttachmentId;
+        payload.brand_color = signatureForm.brandColor;
+        payload.social_links = {
+          website: signatureForm.website || undefined,
+          instagram: signatureForm.instagram || undefined,
+          linkedin: signatureForm.linkedin || undefined,
+        };
+      } else {
+        payload.signature_html = signatureForm.html;
+      }
+      await api.put(`/email-accounts/${signatureAccountId}`, payload);
+      await fetchAccounts();
+      setSignatureMessage("签名已保存");
+    } catch (requestError) {
+      console.error(requestError);
+      setSignatureMessage("保存签名失败");
+    } finally {
+      setSignatureSaving(false);
+    }
+  };
+
   return (
     <AppLayout>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -545,6 +691,9 @@ function SettingsPageContent() {
                       </p>
                     </div>
                     <div className="flex gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => openSignatureEditor(account)}>
+                        <FileSignature className="h-4 w-4" />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => handleVerify(account.id)}>
                         <ShieldCheck className="h-4 w-4" />
                       </Button>
@@ -698,6 +847,151 @@ function SettingsPageContent() {
 
                   <Button onClick={handleAddAccount} className="w-full" disabled={saving}>
                     {saving ? "保存中..." : "创建邮箱账号"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={signatureAccountId !== null}
+              onOpenChange={(open) => !open && closeSignatureEditor()}
+            >
+              <DialogContent className="max-w-3xl">
+                <DialogHeader>
+                  <DialogTitle>编辑签名</DialogTitle>
+                </DialogHeader>
+
+                <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-1">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={signatureForm.enabled}
+                      onChange={(e) => updateSignatureForm({ enabled: e.target.checked })}
+                    />
+                    发信时附加签名
+                  </label>
+
+                  <div className="flex gap-2 rounded-lg border p-1">
+                    <button
+                      type="button"
+                      onClick={() => updateSignatureForm({ mode: "structured" })}
+                      className={`flex-1 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                        signatureForm.mode === "structured" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                      }`}
+                    >
+                      结构化模板
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSignatureForm({ mode: "custom" })}
+                      className={`flex-1 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                        signatureForm.mode === "custom" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                      }`}
+                    >
+                      自定义 HTML
+                    </button>
+                  </div>
+
+                  {signatureForm.mode === "structured" ? (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-4">
+                        <div>
+                          <Label>签名文本</Label>
+                          <textarea
+                            value={signatureForm.content}
+                            onChange={(e) => updateSignatureForm({ content: e.target.value })}
+                            rows={4}
+                            placeholder={"Jane Doe\nPartnerships Lead, Puko Nutrition"}
+                            className="mt-1 w-full rounded-lg border border-input bg-transparent p-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <Label>Logo</Label>
+                          <div className="mt-1 flex items-center gap-3">
+                            {signatureForm.logoPreviewUrl && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={signatureForm.logoPreviewUrl} alt="logo" className="h-10 w-auto rounded border" />
+                            )}
+                            <label className="cursor-pointer">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) void handleLogoUpload(file);
+                                  e.target.value = "";
+                                }}
+                              />
+                              <span className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted">
+                                {logoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                                {signatureForm.logoPreviewUrl ? "更换 Logo" : "上传 Logo"}
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                        <div>
+                          <Label>品牌色</Label>
+                          <div className="mt-1 flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={signatureForm.brandColor}
+                              onChange={(e) => updateSignatureForm({ brandColor: e.target.value })}
+                              className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent p-0.5"
+                            />
+                            <span className="font-mono text-xs text-muted-foreground">{signatureForm.brandColor}</span>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                          <Input
+                            value={signatureForm.website}
+                            onChange={(e) => updateSignatureForm({ website: e.target.value })}
+                            placeholder="网站 URL"
+                          />
+                          <Input
+                            value={signatureForm.instagram}
+                            onChange={(e) => updateSignatureForm({ instagram: e.target.value })}
+                            placeholder="Instagram URL"
+                          />
+                          <Input
+                            value={signatureForm.linkedin}
+                            onChange={(e) => updateSignatureForm({ linkedin: e.target.value })}
+                            placeholder="LinkedIn URL"
+                          />
+                        </div>
+                        <Button variant="outline" size="sm" onClick={refreshStructuredPreview} disabled={signaturePreviewLoading}>
+                          {signaturePreviewLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                          刷新预览
+                        </Button>
+                      </div>
+                      <div>
+                        <Label>预览</Label>
+                        <div
+                          className="mt-1 min-h-[160px] rounded-lg border p-4"
+                          dangerouslySetInnerHTML={{ __html: signaturePreviewHtml || "<p style='color:#9ca3af'>点击“刷新预览”查看效果</p>" }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <Label>自定义签名 HTML</Label>
+                      <HtmlEditor
+                        value={signatureForm.html}
+                        onChange={(html) => updateSignatureForm({ html })}
+                        onImageUpload={(file) => uploadInlineImage(file, "signature_logo")}
+                        minHeightPx={160}
+                        className="mt-1"
+                        placeholder="Jane Doe · Partnerships Lead"
+                      />
+                    </div>
+                  )}
+
+                  {signatureMessage && (
+                    <p className="text-sm text-muted-foreground">{signatureMessage}</p>
+                  )}
+
+                  <Button onClick={handleSaveSignature} className="w-full" disabled={signatureSaving}>
+                    {signatureSaving ? "保存中..." : "保存签名"}
                   </Button>
                 </div>
               </DialogContent>

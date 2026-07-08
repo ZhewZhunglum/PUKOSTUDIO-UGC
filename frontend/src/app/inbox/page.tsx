@@ -6,13 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { HtmlEditor } from "@/components/editor/HtmlEditor";
 import api from "@/lib/api";
 import {
   AI_DRAFT_STATUS_MAP,
   AI_RISK_LEVEL_MAP,
   CONVERSATION_INTENT_MAP,
 } from "@/lib/constants";
+import { uploadInlineImage } from "@/lib/uploads";
 import type {
   AIActionLog,
   AIMessageDraft,
@@ -639,11 +640,12 @@ export default function InboxPage() {
                     onChange={(event) => setReplySubject(event.target.value)}
                     placeholder="回复主题"
                   />
-                  <Textarea
+                  <HtmlEditor
                     value={replyBody}
-                    onChange={(event) => setReplyBody(event.target.value)}
-                    rows={10}
-                    placeholder="<p>Hi...</p>"
+                    onChange={setReplyBody}
+                    onImageUpload={(file) => uploadInlineImage(file, "snippet_asset")}
+                    minHeightPx={200}
+                    placeholder="Hi..."
                   />
                   {selectedDraft.rationale && (
                     <p className="text-xs leading-5 text-muted-foreground">
@@ -699,11 +701,12 @@ export default function InboxPage() {
                 onChange={(event) => setManualSubject(event.target.value)}
                 placeholder="回复主题"
               />
-              <Textarea
+              <HtmlEditor
                 value={manualBody}
-                onChange={(event) => setManualBody(event.target.value)}
-                rows={5}
-                placeholder="<p>Hi...</p>"
+                onChange={setManualBody}
+                onImageUpload={(file) => uploadInlineImage(file, "snippet_asset")}
+                minHeightPx={140}
+                placeholder="Hi..."
               />
               <AttachmentField
                 attachments={manualAttachments}

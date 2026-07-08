@@ -21,8 +21,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { HtmlEditor } from "@/components/editor/HtmlEditor";
 import api from "@/lib/api";
 import { downloadExport } from "@/lib/download";
+import { uploadInlineImage } from "@/lib/uploads";
 import type { EmailTemplate } from "@/types";
 import { ChevronDown, ChevronUp, Copy, Download, Edit, Eye, Loader2, Plus, Sparkles, Trash2, Upload, Wand2 } from "lucide-react";
 
@@ -518,12 +520,14 @@ export default function TemplatesPage() {
               </div>
 
               <div>
-                <Label>邮件正文 (HTML) *</Label>
-                <Textarea
+                <Label>邮件正文 *</Label>
+                <HtmlEditor
                   value={formBody}
-                  onChange={(e) => setFormBody(e.target.value)}
-                  rows={10}
-                  placeholder={`<p>Hi {{first_name}},</p>\n<p>I came across your content and loved it!</p>\n<p>We'd love to collaborate with you on...</p>`}
+                  onChange={setFormBody}
+                  onImageUpload={(file) => uploadInlineImage(file, "snippet_asset")}
+                  minHeightPx={220}
+                  className="mt-1.5"
+                  placeholder="Hi {{first_name}}, ..."
                 />
               </div>
               <Button onClick={handleSave} disabled={!formName || !formSubject || !formBody}>
