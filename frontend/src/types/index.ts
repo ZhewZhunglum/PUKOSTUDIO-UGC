@@ -446,6 +446,39 @@ export interface ReplyDraft {
   fallback_reason: string | null;
 }
 
+export interface ClientConversationMessage {
+  id: string;
+  direction: "outbound" | "inbound";
+  from_address: string;
+  to_address: string;
+  subject: string;
+  body_html: string | null;
+  body_text: string | null;
+  status: string;
+  message_id: string | null;
+  in_reply_to: string | null;
+  references: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+export interface ClientConversation {
+  id: string;
+  client_id: string;
+  client_company_name: string;
+  client_email: string | null;
+  last_message_at: string | null;
+  unread_count: number;
+  needs_review: boolean;
+  assigned_to: string | null;
+  latest_subject: string | null;
+  last_message_preview: string | null;
+}
+
+export interface ClientConversationDetail extends ClientConversation {
+  messages: ClientConversationMessage[];
+}
+
 export type AIRiskLevel = "low" | "medium" | "high";
 
 export type AIDraftStatus =
