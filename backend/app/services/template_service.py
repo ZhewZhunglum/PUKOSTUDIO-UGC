@@ -213,6 +213,32 @@ def build_influencer_variables(influencer, fallback_name: str | None = None) -> 
     }
 
 
+def build_client_variables(client, fallback_name: str | None = None) -> dict:
+    """Assemble the template variable map for an outbound B2B client email.
+
+    ``client`` may be None (falls back to ``fallback_name``). B2B contacts have
+    no platform/follower data, so those placeholders resolve empty rather than
+    erroring — templates authored for influencers can still be reused as-is.
+    """
+    name = (getattr(client, "contact_name", None) or fallback_name or "").strip()
+    first_name = name.split()[0] if name else ""
+
+    return {
+        "name": name,
+        "first_name": first_name,
+        "email": getattr(client, "email", None) or "",
+        "company_name": getattr(client, "company_name", None) or "",
+        "title": getattr(client, "title", None) or "",
+        "industry": getattr(client, "industry", None) or "",
+        "website": getattr(client, "website", None) or "",
+        "niche": "",
+        "country": "",
+        "platform": "",
+        "username": "",
+        "followers": "",
+    }
+
+
 def render_template(subject: str, body_html: str, variables: dict) -> tuple[str, str]:
     """Replace {{variable}} placeholders with actual values."""
     rendered_subject = subject

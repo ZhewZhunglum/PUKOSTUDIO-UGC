@@ -9,6 +9,7 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=[
         "app.workers.email_tasks",
+        "app.workers.client_email_tasks",
         "app.workers.import_tasks",
         "app.workers.ai_tasks",
         "app.workers.woto_tasks",
@@ -34,6 +35,10 @@ celery_app.conf.update(
         # Dispatch due follow-up steps for multi-step campaigns.
         "process-campaign-followups": {
             "task": "app.workers.email_tasks.process_followups",
+            "schedule": crontab(minute="*/15"),
+        },
+        "process-client-campaign-followups": {
+            "task": "app.workers.client_email_tasks.process_client_followups",
             "schedule": crontab(minute="*/15"),
         },
         # advance_warmup must run BEFORE reset_daily_counts zeroes sent_today,
