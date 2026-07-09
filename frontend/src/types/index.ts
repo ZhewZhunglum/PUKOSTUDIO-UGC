@@ -103,6 +103,34 @@ export interface Influencer {
   updated_at: string;
 }
 
+export type ClientStatus =
+  | "new"
+  | "contacted"
+  | "replied"
+  | "negotiating"
+  | "signed"
+  | "rejected"
+  | "blacklisted";
+
+export type ClientRelationshipType = "buyer" | "agency_prospect" | "partner";
+
+export interface Client {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  industry: string | null;
+  website: string | null;
+  relationship_type: ClientRelationshipType;
+  status: ClientStatus;
+  notes: string | null;
+  source: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type InfluencerCRMAction =
   | "mark_contacted"
   | "mark_replied"

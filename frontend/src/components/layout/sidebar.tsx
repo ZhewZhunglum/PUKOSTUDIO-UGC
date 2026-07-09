@@ -14,6 +14,7 @@ import {
   Settings,
   Sparkles,
   ChevronDown,
+  Building2,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth";
 import api from "@/lib/api";
@@ -22,6 +23,7 @@ interface Badges {
   influencers: number;
   campaigns: number;
   inbox: number;
+  clients: number;
 }
 
 const systemNav = [
@@ -56,18 +58,20 @@ export function Sidebar() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const pathname = usePathname();
-  const [badges, setBadges] = useState<Badges>({ influencers: 0, campaigns: 0, inbox: 0 });
+  const [badges, setBadges] = useState<Badges>({ influencers: 0, campaigns: 0, inbox: 0, clients: 0 });
 
   useEffect(() => {
     Promise.all([
       api.get("/influencers", { params: { per_page: 1 } }).catch(() => null),
       api.get("/campaigns").catch(() => null),
       api.get("/conversations", { params: { per_page: 1 } }).catch(() => null),
-    ]).then(([infRes, campRes, convRes]) => {
+      api.get("/clients", { params: { per_page: 1 } }).catch(() => null),
+    ]).then(([infRes, campRes, convRes, clientRes]) => {
       setBadges({
         influencers: infRes?.data?.total ?? 0,
         campaigns: Array.isArray(campRes?.data) ? campRes.data.filter((c: { status: string }) => c.status === "active").length : 0,
         inbox: convRes?.data?.total ?? 0,
+        clients: clientRes?.data?.total ?? 0,
       });
     });
   }, []);
@@ -78,6 +82,10 @@ export function Sidebar() {
     { href: "/influencers", label: "达人管理", icon: Users, count: badges.influencers },
     { href: "/campaigns",   label: "建联活动", icon: Megaphone, count: badges.campaigns },
     { href: "/inbox",       label: "收件箱",   icon: Inbox, count: badges.inbox },
+  ];
+
+  const clientNav = [
+    { href: "/clients", label: "客户管理", icon: Building2, count: badges.clients },
   ];
 
   const initials = user?.name ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() : "OP";
@@ -97,6 +105,16 @@ export function Sidebar() {
       {/* Workflow */}
       <div className="operator-nav-section">Workflow</div>
       {workflowNav.map((item) => (
+        <NavItem
+          key={item.href}
+          {...item}
+          isActive={pathname === item.href || pathname.startsWith(item.href + "/")}
+        />
+      ))}
+
+      {/* B端客户 */}
+      <div className="operator-nav-section">B端客户</div>
+      {clientNav.map((item) => (
         <NavItem
           key={item.href}
           {...item}
