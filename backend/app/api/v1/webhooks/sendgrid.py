@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.models.client_email_message import ClientEmailEventType, ClientEmailStatus
 from app.models.email_message import EmailEventType, EmailStatus
+from app.services.client_email_sending_service import update_client_message_status
 from app.services.email_sending_service import update_message_status
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,16 @@ SENDGRID_EVENT_MAP = {
     "bounce": (EmailStatus.bounced, EmailEventType.bounced),
     "spamreport": (EmailStatus.complained, EmailEventType.complained),
     "unsubscribe": (EmailStatus.complained, EmailEventType.unsubscribed),
+}
+
+# Additive fallback map for the B2B client pipeline (same provider event keys).
+SENDGRID_CLIENT_EVENT_MAP = {
+    "delivered": (ClientEmailStatus.delivered, ClientEmailEventType.delivered),
+    "open": (ClientEmailStatus.opened, ClientEmailEventType.opened),
+    "click": (ClientEmailStatus.clicked, ClientEmailEventType.clicked),
+    "bounce": (ClientEmailStatus.bounced, ClientEmailEventType.bounced),
+    "spamreport": (ClientEmailStatus.complained, ClientEmailEventType.complained),
+    "unsubscribe": (ClientEmailStatus.complained, ClientEmailEventType.unsubscribed),
 }
 
 
@@ -38,13 +50,22 @@ async def sendgrid_webhook(request: Request, db: AsyncSession = Depends(get_db))
             sg_message_id = event.get("sg_message_id", "").split(".")[0]
 
             if sg_message_id:
-                await update_message_status(
+                matched = await update_message_status(
                     db,
                     message_id=sg_message_id,
                     status=status,
                     event_type=event_type,
                     raw_data=event,
                 )
+                if not matched and event_type_str in SENDGRID_CLIENT_EVENT_MAP:
+                    client_status, client_event_type = SENDGRID_CLIENT_EVENT_MAP[event_type_str]
+                    await update_client_message_status(
+                        db,
+                        message_id=sg_message_id,
+                        status=client_status,
+                        event_type=client_event_type,
+                        raw_data=event,
+                    )
         except Exception:
             logger.exception("Error processing SendGrid event")
             failed = True

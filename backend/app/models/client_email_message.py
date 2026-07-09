@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
 
@@ -24,6 +24,17 @@ class ClientEmailStatus(str, enum.Enum):
     bounced = "bounced"
     complained = "complained"
     failed = "failed"
+
+
+class ClientEmailEventType(str, enum.Enum):
+    queued = "queued"
+    sent = "sent"
+    delivered = "delivered"
+    opened = "opened"
+    clicked = "clicked"
+    bounced = "bounced"
+    complained = "complained"
+    unsubscribed = "unsubscribed"
 
 
 class ClientEmailMessage(BaseModel):
@@ -69,3 +80,25 @@ class ClientEmailMessage(BaseModel):
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+
+    events: Mapped[list["ClientEmailEvent"]] = relationship(
+        "ClientEmailEvent", back_populates="client_email_message", cascade="all, delete-orphan"
+    )
+
+
+class ClientEmailEvent(BaseModel):
+    __tablename__ = "client_email_events"
+
+    client_email_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("client_email_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type: Mapped[ClientEmailEventType] = mapped_column(
+        Enum(ClientEmailEventType), nullable=False
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    client_email_message: Mapped[ClientEmailMessage] = relationship(
+        "ClientEmailMessage", back_populates="events"
+    )

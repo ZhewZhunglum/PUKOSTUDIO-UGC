@@ -8,8 +8,11 @@ from app.models.client_campaign import (
     ClientCampaignStatus,
     ClientCampaignStep,
 )
+from app.models.client_conversation import ClientConversation
 from app.models.client_email_message import (
     ClientEmailDirection,
+    ClientEmailEvent,
+    ClientEmailEventType,
     ClientEmailMessage,
     ClientEmailStatus,
 )
@@ -47,6 +50,9 @@ __all__ = [
     "ClientEmailMessage",
     "ClientEmailDirection",
     "ClientEmailStatus",
+    "ClientEmailEvent",
+    "ClientEmailEventType",
+    "ClientConversation",
     "EmailAccount",
     "EmailAttachment",
     "AttachmentPurpose",

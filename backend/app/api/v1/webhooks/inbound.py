@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.services import conversation_service
+from app.core.exceptions import NotFoundException
+from app.services import client_conversation_service, conversation_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_UNKNOWN_INFLUENCER_DETAIL = "Inbound sender is not a known influencer"
 
 
 @router.post("")
@@ -22,6 +25,21 @@ async def inbound_email(request: Request, db: AsyncSession = Depends(get_db)):
     logger.info("Inbound email received from %s", body.get("from", "unknown"))
     try:
         result = await conversation_service.ingest_inbound_email(db, body)
+    except NotFoundException as exc:
+        # Sender isn't a known influencer — try the B2B client pipeline before
+        # giving up. Both lookups are keyed on from_email within the same team,
+        # so this is a safe additive fallback with no risk to the influencer path.
+        if exc.detail != _UNKNOWN_INFLUENCER_DETAIL:
+            raise
+        try:
+            result = await client_conversation_service.ingest_inbound_email(db, body)
+        except Exception:
+            logger.exception("Failed to process inbound email (client fallback)")
+            raise
+        conversation_id = result.get("conversation_id")
+        if conversation_id:
+            await db.commit()
+        return {"status": "ok", **result}
     except Exception:
         # Re-raise so get_db rolls back and the provider gets a non-2xx and
         # retries. Previously this returned HTTP 200 on failure, which made the
