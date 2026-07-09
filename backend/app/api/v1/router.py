@@ -5,6 +5,7 @@ from app.api.v1 import (
     analytics,
     auth,
     campaigns,
+    client_campaigns,
     clients,
     conversations,
     discovery,
@@ -29,6 +30,9 @@ api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 api_router.include_router(influencers.router, prefix="/influencers", tags=["Influencers"])
 api_router.include_router(campaigns.router, prefix="/campaigns", tags=["Campaigns"])
 api_router.include_router(clients.router, prefix="/clients", tags=["Clients"])
+api_router.include_router(
+    client_campaigns.router, prefix="/client-campaigns", tags=["Client Campaigns"]
+)
 api_router.include_router(templates.router, prefix="/templates", tags=["Templates"])
 api_router.include_router(email_accounts.router, prefix="/email-accounts", tags=["Email Accounts"])
 api_router.include_router(conversations.router, prefix="/conversations", tags=["Conversations"])

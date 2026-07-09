@@ -15,6 +15,7 @@ import {
   Sparkles,
   ChevronDown,
   Building2,
+  Handshake,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth";
 import api from "@/lib/api";
@@ -24,6 +25,7 @@ interface Badges {
   campaigns: number;
   inbox: number;
   clients: number;
+  clientCampaigns: number;
 }
 
 const systemNav = [
@@ -58,7 +60,7 @@ export function Sidebar() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const pathname = usePathname();
-  const [badges, setBadges] = useState<Badges>({ influencers: 0, campaigns: 0, inbox: 0, clients: 0 });
+  const [badges, setBadges] = useState<Badges>({ influencers: 0, campaigns: 0, inbox: 0, clients: 0, clientCampaigns: 0 });
 
   useEffect(() => {
     Promise.all([
@@ -66,12 +68,14 @@ export function Sidebar() {
       api.get("/campaigns").catch(() => null),
       api.get("/conversations", { params: { per_page: 1 } }).catch(() => null),
       api.get("/clients", { params: { per_page: 1 } }).catch(() => null),
-    ]).then(([infRes, campRes, convRes, clientRes]) => {
+      api.get("/client-campaigns").catch(() => null),
+    ]).then(([infRes, campRes, convRes, clientRes, clientCampRes]) => {
       setBadges({
         influencers: infRes?.data?.total ?? 0,
         campaigns: Array.isArray(campRes?.data) ? campRes.data.filter((c: { status: string }) => c.status === "active").length : 0,
         inbox: convRes?.data?.total ?? 0,
         clients: clientRes?.data?.total ?? 0,
+        clientCampaigns: Array.isArray(clientCampRes?.data) ? clientCampRes.data.filter((c: { status: string }) => c.status === "active").length : 0,
       });
     });
   }, []);
@@ -86,6 +90,7 @@ export function Sidebar() {
 
   const clientNav = [
     { href: "/clients", label: "客户管理", icon: Building2, count: badges.clients },
+    { href: "/client-campaigns", label: "客户建联", icon: Handshake, count: badges.clientCampaigns },
   ];
 
   const initials = user?.name ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() : "OP";
