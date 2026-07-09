@@ -248,6 +248,45 @@ export interface CampaignAIPlaybook {
   updated_at: string | null;
 }
 
+export interface ClientCampaignStep {
+  id: string;
+  step_order: number;
+  step_type: "initial" | "follow_up";
+  template_id: string;
+  delay_days: number;
+  condition: {
+    requires_reply?: boolean;
+    skip_if_bounced?: boolean;
+    ab_subject_b?: string;
+  } | null;
+}
+
+export interface ClientCampaign {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "active" | "paused" | "completed" | "archived";
+  target_criteria: CampaignTargetCriteria | null;
+  schedule_config: CampaignScheduleConfig | null;
+  steps: ClientCampaignStep[];
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ClientCampaignEnrollment {
+  id: string;
+  client_id: string;
+  client_company_name: string;
+  client_email: string | null;
+  current_step: number;
+  status: string;
+  enrolled_at: string | null;
+  last_sent_at: string | null;
+  last_email_status: string | null;
+  failure_reason: string | null;
+}
+
 export interface EmailTemplate {
   id: string;
   name: string;
