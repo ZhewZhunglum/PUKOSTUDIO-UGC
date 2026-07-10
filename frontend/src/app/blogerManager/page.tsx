@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import api from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { INFLUENCER_STATUS_MAP } from "@/lib/constants";
 import { useDebouncedValue } from "@/lib/hooks";
 import type {
@@ -517,7 +518,7 @@ export default function BlogerManagerPage() {
   const handleCopy = async (influencer: Influencer) => {
     const platform = firstPlatform(influencer);
     const value = platform?.profile_url || influencer.email || influencer.name;
-    await navigator.clipboard?.writeText(value);
+    await copyText(value);
   };
 
   const handleStartSync = async () => {
