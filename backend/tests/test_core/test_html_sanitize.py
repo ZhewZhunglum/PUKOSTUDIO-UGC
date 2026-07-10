@@ -53,6 +53,18 @@ def test_allows_table_structure_with_colspan_and_style():
     assert "<td>cell</td>" not in result  # style must survive, not be stripped
 
 
+def test_preserves_starterkit_markdown_shortcut_tags():
+    """Regression guard: Tiptap StarterKit emits <hr>, <pre><code>, and inline
+    <code> via markdown input rules (---, ```, `backtick`) even without toolbar
+    buttons. If they aren't allowlisted, the divider / code formatting silently
+    vanishes on the next save."""
+    result = sanitize_html("<p>a</p><hr><pre><code>let x = 1;</code></pre><p><code>inline</code></p>")
+
+    assert "<hr>" in result
+    assert "<pre><code>let x = 1;</code></pre>" in result
+    assert "<code>inline</code>" in result
+
+
 def test_empty_and_none_input_return_empty_string():
     assert sanitize_html(None) == ""
     assert sanitize_html("") == ""

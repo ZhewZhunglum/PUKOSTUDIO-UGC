@@ -28,6 +28,14 @@ async def upload_file(
     except ValueError:
         raise BadRequestException(f"Invalid purpose: {purpose}")
 
+    # Publicly-servable purposes are for inline email images only — reject
+    # non-image uploads here so documents can never become reachable through
+    # the unauthenticated /public route below.
+    if purpose_enum in _PUBLIC_ATTACHMENT_PURPOSES and not (
+        file.content_type or ""
+    ).startswith("image/"):
+        raise BadRequestException("该用途仅支持图片文件")
+
     return await attachment_service.save_upload(
         db, current_user.team_id, current_user.id, file, purpose_enum
     )
@@ -53,6 +61,10 @@ async def serve_public_attachment(
         select(EmailAttachment).where(
             EmailAttachment.id == attachment_id,
             EmailAttachment.purpose.in_(_PUBLIC_ATTACHMENT_PURPOSES),
+            # Defense in depth: even if a non-image row ever carries one of
+            # these purposes (e.g. uploaded before the image-only check above),
+            # never serve it unauthenticated.
+            EmailAttachment.content_type.like("image/%"),
         )
     )
     attachment = result.scalar_one_or_none()
