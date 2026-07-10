@@ -70,6 +70,7 @@ async def export_clients(
     status: str | None = Query(None),
     relationship_type: str | None = Query(None),
     industry: str | None = Query(None),
+    source: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -93,6 +94,7 @@ async def export_clients(
             status=status,
             relationship_type=relationship_type,
             industry=industry,
+            source=source,
         )
         items = result["items"]
         if not items:

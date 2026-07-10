@@ -24,6 +24,10 @@ _ALLOWED_TAGS = {
     "h1", "h2", "h3", "h4", "h5", "h6",
     "blockquote",
     "table", "thead", "tbody", "tr", "td", "th",
+    # Tiptap StarterKit emits these via markdown input rules (```, ---,
+    # `backtick`) and keyboard shortcuts even without toolbar buttons —
+    # stripping them silently loses the divider / code formatting on save.
+    "hr", "pre", "code",
 }
 
 # Every block/inline container that Tiptap can attach inline style="" to

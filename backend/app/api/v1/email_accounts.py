@@ -116,17 +116,23 @@ async def update_email_account(
             value = _sanitize_provider_config(value)
         elif field == "signature_mode":
             value = SignatureMode(value)
-        elif field == "signature_html" and effective_mode == SignatureMode.custom.value:
+        elif field == "signature_html":
+            if effective_mode != SignatureMode.custom.value:
+                # Structured mode owns signature_html via render_signature_html;
+                # never store caller-supplied (unsanitized) HTML directly.
+                continue
             # Custom mode: the caller's rich-text HTML is sanitized and stored
             # directly, bypassing render_signature_html's plain-text escaping.
             value = sanitize_html(value)
         setattr(account, field, value)
 
     # Structured mode (default): re-render the canonical signature HTML
-    # whenever any structured input changed. Skipped entirely in custom mode
-    # so the freshly-sanitized signature_html set above isn't clobbered.
+    # whenever any structured input changed — or when the mode itself was
+    # switched (back) to structured, so stale custom HTML can't linger.
+    # Skipped entirely in custom mode so the freshly-sanitized signature_html
+    # set above isn't clobbered.
     if effective_mode == SignatureMode.structured.value and (
-        _SIGNATURE_INPUT_FIELDS & update_fields.keys()
+        (_SIGNATURE_INPUT_FIELDS | {"signature_mode"}) & update_fields.keys()
     ):
         account.signature_html = render_signature_html(
             content=account.signature_content,

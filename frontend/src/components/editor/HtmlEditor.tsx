@@ -167,6 +167,7 @@ export function HtmlEditor({
   className,
 }: HtmlEditorProps) {
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const editor = useEditor({
     extensions: [
@@ -207,9 +208,13 @@ export function HtmlEditor({
 
   const handleImagePick = async (file: File) => {
     setUploading(true);
+    setUploadError(null);
     try {
       const url = await onImageUpload(file);
       editor?.chain().focus().setImage({ src: url }).run();
+    } catch (error) {
+      console.error(error);
+      setUploadError("图片上传失败，请检查文件大小/类型后重试");
     } finally {
       setUploading(false);
     }
@@ -218,6 +223,11 @@ export function HtmlEditor({
   return (
     <div className={cn("overflow-hidden rounded-lg border", className)}>
       <EditorToolbar editor={editor} onImagePick={handleImagePick} uploading={uploading} />
+      {uploadError && (
+        <p className="border-b bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
+          {uploadError}
+        </p>
+      )}
       <div style={{ minHeight: minHeightPx }}>
         <EditorContent editor={editor} />
       </div>

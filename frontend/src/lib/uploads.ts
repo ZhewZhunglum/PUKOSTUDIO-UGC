@@ -1,6 +1,4 @@
-import api from "@/lib/api";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8917";
+import api, { API_URL } from "@/lib/api";
 
 export type InlineImagePurpose = "signature_logo" | "snippet_asset";
 

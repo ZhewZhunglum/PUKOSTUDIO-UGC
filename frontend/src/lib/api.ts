@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8917";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8917";
 
 let refreshPromise: Promise<string> | null = null;
 

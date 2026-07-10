@@ -30,6 +30,9 @@ async def inbound_email(request: Request, db: AsyncSession = Depends(get_db)):
         # giving up. Both lookups are keyed on from_email within the same team,
         # so this is a safe additive fallback with no risk to the influencer path.
         if exc.detail != _UNKNOWN_INFLUENCER_DETAIL:
+            # Any other not-found (e.g. recipient account missing) used to be
+            # logged by the catch-all below; keep it visible in production logs.
+            logger.exception("Failed to process inbound email")
             raise
         try:
             result = await client_conversation_service.ingest_inbound_email(db, body)

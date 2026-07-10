@@ -14,7 +14,11 @@ from app.integrations.email.manager import (
     get_email_sender,
     select_best_account,
 )
-from app.models.client import Client
+from app.models.client import Client, ClientStatus
+from app.models.client_campaign import (
+    ClientCampaignEnrollment,
+    ClientCampaignInfluencerStatus,
+)
 from app.models.client_conversation import ClientConversation
 from app.models.client_email_message import (
     ClientEmailDirection,
@@ -383,6 +387,21 @@ async def ingest_inbound_email(db: AsyncSession, payload: dict) -> dict:
     )
     db.add(message)
     await db.flush()
+
+    # A reply halts any active follow-up sequence for this client. The B2B V1
+    # rule is simply "any reply stops follow-ups" (no AI intent classification,
+    # unlike the influencer pipeline) — without this, process_client_followups
+    # would keep mailing scheduled steps to someone who already responded.
+    enrollments_result = await db.execute(
+        select(ClientCampaignEnrollment).where(
+            ClientCampaignEnrollment.client_id == client.id,
+            ClientCampaignEnrollment.status == ClientCampaignInfluencerStatus.in_progress,
+        )
+    )
+    for enrollment in enrollments_result.scalars().all():
+        enrollment.status = ClientCampaignInfluencerStatus.replied
+    if client.status in (ClientStatus.new, ClientStatus.contacted):
+        client.status = ClientStatus.replied
 
     conversation_result = await db.execute(
         select(ClientConversation).where(
