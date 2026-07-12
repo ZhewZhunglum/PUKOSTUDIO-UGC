@@ -232,7 +232,7 @@ export default function TemplatesPage() {
         <div className="ds-between" style={{ marginBottom: 4 }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>系统</div>
-            <h1 className="h-1">邮件模板</h1>
+            <h1 className="ds-h1">邮件模板</h1>
             <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
               使用 {"{{"} name {"}}"},  {"{{"} first_name {"}}"}  等变量实现个性化。
             </p>

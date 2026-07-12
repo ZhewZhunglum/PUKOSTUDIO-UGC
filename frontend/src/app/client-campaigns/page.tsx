@@ -57,7 +57,7 @@ export default function ClientCampaignsPage() {
         <div className="ds-between" style={{ marginBottom: 20 }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>B端客户</div>
-            <h1 className="h-1">客户建联</h1>
+            <h1 className="ds-h1">客户建联</h1>
             <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
               向批发/零售采购商、代理服务客户、品牌合作伙伴发起主动建联 · 当前在跑{" "}
               <b className="ds-primary ds-num">{campaigns.filter((c) => c.status === "active").length}</b> 个活动
@@ -149,7 +149,7 @@ export default function ClientCampaignsPage() {
                         <span className="ds-tag" style={{ fontFamily: "var(--f-mono)", fontSize: 10 }}>{selected.id.slice(0, 8)}</span>
                         <StatusBadge status={selected.status} />
                       </div>
-                      <h2 className="h-2">{selected.name}</h2>
+                      <h2 className="ds-h2">{selected.name}</h2>
                       <div className="ds-caption" style={{ marginTop: 4, color: "var(--ink-3)" }}>
                         {selected.steps?.length ?? 0} 个发送步骤 · 创建于 {new Date(selected.created_at).toLocaleDateString("zh-CN")}
                       </div>
@@ -181,14 +181,14 @@ export default function ClientCampaignsPage() {
 
                 {selected.description && (
                   <div className="ds-card ds-card-pad">
-                    <div className="h-3" style={{ marginBottom: 10 }}>活动描述</div>
+                    <div className="ds-h3" style={{ marginBottom: 10 }}>活动描述</div>
                     <p className="ds-body">{selected.description}</p>
                   </div>
                 )}
 
                 <div className="ds-card">
                   <div className="ds-card-section ds-between">
-                    <div className="h-3">发送步骤</div>
+                    <div className="ds-h3">发送步骤</div>
                     <Link href={`/client-campaigns/${selected.id}`} className="ds-btn ds-btn-ghost ds-btn-sm">
                       编辑步骤 <ArrowRight className="h-[13px] w-[13px]" />
                     </Link>

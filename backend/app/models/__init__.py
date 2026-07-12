@@ -19,6 +19,7 @@ from app.models.client_email_message import (
 from app.models.conversation import Conversation
 from app.models.email_account import EmailAccount
 from app.models.email_attachment import AttachmentPurpose, EmailAttachment
+from app.models.email_dig import EmailDigJob, EmailDigJobStatus
 from app.models.email_message import EmailEvent, EmailMessage
 from app.models.influencer import Influencer, InfluencerPlatform, Tag, influencer_tags
 from app.models.suppression import EmailSuppression, SuppressionReason
@@ -64,4 +65,6 @@ __all__ = [
     "Conversation",
     "WotoSyncJob",
     "WotoUsageRecord",
+    "EmailDigJob",
+    "EmailDigJobStatus",
 ]

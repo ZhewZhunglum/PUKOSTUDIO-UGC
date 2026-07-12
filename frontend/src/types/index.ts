@@ -84,6 +84,13 @@ export interface Influencer {
   name: string;
   email: string | null;
   email_verified: boolean;
+  phone: string | null;
+  /** Which batch job sourced the contact: "dig" (free crawl) | "woto" (paid) | null (import/manual) */
+  email_source: string | null;
+  phone_source: string | null;
+  /** Outcome of the last batch contact dig: found | no-email | unreachable */
+  email_dig_status: string | null;
+  email_dig_at: string | null;
   avatar_url: string | null;
   niche: string | null;
   country: string | null;

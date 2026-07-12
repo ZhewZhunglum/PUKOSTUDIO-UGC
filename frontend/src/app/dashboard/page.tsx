@@ -258,7 +258,7 @@ export default function DashboardPage() {
           <div className="ds-card">
             <div className="ds-card-section ds-between">
               <div>
-                <div className="h-3">每日触达趋势</div>
+                <div className="ds-h3">每日触达趋势</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>最近天 · 发送 / 打开 / 回复</div>
               </div>
               <div className="ds-row" style={{ gap: 14 }}>
@@ -277,7 +277,7 @@ export default function DashboardPage() {
           <div className="ds-card">
             <div className="ds-card-section ds-between">
               <div>
-                <div className="h-3">转化漏斗</div>
+                <div className="ds-h3">转化漏斗</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>累计 · 从发送到签约</div>
               </div>
               <span className="ds-tag">全部</span>
@@ -293,7 +293,7 @@ export default function DashboardPage() {
           <div className="ds-card">
             <div className="ds-card-section ds-between">
               <div>
-                <div className="h-3">进行中的活动</div>
+                <div className="ds-h3">进行中的活动</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>按昨日表现排序</div>
               </div>
               <Link href="/campaigns" className="ds-btn ds-btn-ghost ds-btn-sm">
@@ -340,7 +340,7 @@ export default function DashboardPage() {
 
           <div className="ds-card">
             <div className="ds-card-section ds-between">
-              <div className="h-3">最近活动</div>
+              <div className="ds-h3">最近活动</div>
               <button className="ds-btn ds-btn-ghost ds-btn-sm">日志</button>
             </div>
             <div style={{ padding: "4px 0" }}>
@@ -378,7 +378,7 @@ export default function DashboardPage() {
           <div className="ds-card ds-card-pad">
             <div className="ds-between" style={{ marginBottom: 16 }}>
               <div>
-                <div className="h-3">达人粉丝层级</div>
+                <div className="ds-h3">达人粉丝层级</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>共 {fmtNum(2847)} 位达人</div>
               </div>
               <span className="ds-tag">资产</span>
@@ -388,7 +388,7 @@ export default function DashboardPage() {
           <div className="ds-card ds-card-pad">
             <div className="ds-between" style={{ marginBottom: 16 }}>
               <div>
-                <div className="h-3">类目分布</div>
+                <div className="ds-h3">类目分布</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>保健品细分类目 · Top 6</div>
               </div>
               <span className="ds-tag">资产</span>

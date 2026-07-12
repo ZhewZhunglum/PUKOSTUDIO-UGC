@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -10,6 +11,7 @@ from app.core.tabular import normalize_format, parse_tabular, tabular_response
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.email import EmailMessageResponse
+from app.schemas.email_dig import EmailDigJobResponse
 from app.schemas.influencer import (
     BulkTagRequest,
     InfluencerCreate,
@@ -21,7 +23,7 @@ from app.schemas.influencer import (
     TagCreate,
     TagResponse,
 )
-from app.services import influencer_service
+from app.services import influencer_service, woto_backfill_service
 
 router = APIRouter()
 
@@ -35,6 +37,7 @@ async def list_influencers(
     source: str | None = Query(None),
     data_provider: str | None = Query(None),
     has_email: bool | None = Query(None),
+    dig_status: str | None = Query(None),
     synced_after: datetime | None = Query(None),
     tag_id: uuid.UUID | None = Query(None),
     min_followers: int | None = Query(None),
@@ -56,6 +59,7 @@ async def list_influencers(
         source=source,
         data_provider=data_provider,
         has_email=has_email,
+        dig_status=dig_status,
         synced_after=synced_after,
         tag_id=tag_id,
         min_followers=min_followers,
@@ -89,6 +93,30 @@ async def import_influencers(
     return result
 
 
+class WotoBackfillRequest(BaseModel):
+    influencer_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=1000)
+
+
+@router.post("/woto-backfill", response_model=EmailDigJobResponse, status_code=202)
+async def start_woto_backfill(
+    data: WotoBackfillRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fill missing emails/phones for selected influencers from the paid Woto
+    database — the fallback after the free public-profile dig found nothing.
+    Poll GET /discovery/email-dig/{job_id} for progress (mode="woto")."""
+    job = await woto_backfill_service.create_backfill_job(
+        db, current_user.team_id, data.influencer_ids
+    )
+    await db.commit()
+
+    from app.workers.email_dig_tasks import run_woto_backfill
+
+    run_woto_backfill.delay(str(job.id))
+    return job
+
+
 @router.get("/export")
 async def export_influencers(
     format: str = Query("csv"),
@@ -106,7 +134,7 @@ async def export_influencers(
     fmt = normalize_format(format)
     BATCH_SIZE = 500
     headers = [
-        "name", "email", "niche", "country", "status",
+        "name", "email", "email_source", "phone", "phone_source", "niche", "country", "status",
         "platform", "username", "followers", "engagement_rate", "source", "created_at",
     ]
 
@@ -131,6 +159,9 @@ async def export_influencers(
             rows.append([
                 inf.name,
                 inf.email or "",
+                inf.email_source or "",
+                inf.phone or "",
+                inf.phone_source or "",
                 inf.niche or "",
                 inf.country or "",
                 inf.status.value if inf.status else "",

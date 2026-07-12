@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.import_mapping import normalize_import_row
 from app.core.pagination import PaginationParams, paginate
 from app.integrations.woto import WotoAPIError, WotoConfigurationError
 from app.models.influencer import (
@@ -47,6 +48,7 @@ async def list_influencers(
     source: str | None = None,
     data_provider: str | None = None,
     has_email: bool | None = None,
+    dig_status: str | None = None,
     synced_after: datetime | None = None,
     tag_id: uuid.UUID | None = None,
     min_followers: int | None = None,
@@ -81,6 +83,13 @@ async def list_influencers(
         query = query.where(Influencer.email.is_not(None), Influencer.email != "")
     elif has_email is False:
         query = query.where(or_(Influencer.email.is_(None), Influencer.email == ""))
+
+    # Dig outcome filter: "no-email"/"unreachable" = already dug, nothing found
+    # (ideal candidates for the Woto paid backfill); "none" = never dug.
+    if dig_status == "none":
+        query = query.where(Influencer.email_dig_status.is_(None))
+    elif dig_status:
+        query = query.where(Influencer.email_dig_status == dig_status)
 
     if tag_id:
         query = query.join(influencer_tags).where(influencer_tags.c.tag_id == tag_id)
@@ -444,14 +453,22 @@ async def import_influencers_from_rows(
     imported = 0
     skipped = 0
     errors = []
+    # Newly created influencers without an email — the UI offers to run email
+    # extraction on exactly these right after import.
+    imported_without_email_ids: list[str] = []
 
-    for i, row in enumerate(rows):
+    for i, raw_row in enumerate(rows):
         try:
+            # Map header variants (creator-finder exports, Chinese headers, ...)
+            # onto the canonical template fields before validating.
+            row = normalize_import_row(raw_row)
             name = row.get("name", "").strip()
             email = row.get("email", "").strip() or None
+            platform_name = row.get("platform", "").strip().lower()
+            username = row.get("username", "").strip()
 
             if not name:
-                errors.append(f"Row {i + 1}: Missing name")
+                errors.append(f"Row {i + 1}: Missing name (no name/username column matched)")
                 skipped += 1
                 continue
 
@@ -463,6 +480,22 @@ async def import_influencers_from_rows(
                     )
                 )
                 if existing.scalar_one_or_none():
+                    errors.append(f"Row {i + 1}: Duplicate email {email}")
+                    skipped += 1
+                    continue
+
+            # Check duplicate by platform + username (rows without email would
+            # otherwise re-import as new influencers on every upload)
+            if platform_name in ("tiktok", "instagram", "youtube") and username:
+                existing_platform = await db.execute(
+                    select(InfluencerPlatform).where(
+                        InfluencerPlatform.team_id == team_id,
+                        InfluencerPlatform.platform == Platform(platform_name),
+                        InfluencerPlatform.username == username,
+                    )
+                )
+                if existing_platform.scalars().first():
+                    errors.append(f"Row {i + 1}: Duplicate {platform_name} account {username}")
                     skipped += 1
                     continue
 
@@ -476,10 +509,10 @@ async def import_influencers_from_rows(
             )
             db.add(influencer)
             await db.flush()
+            if not email:
+                imported_without_email_ids.append(str(influencer.id))
 
             # Add platform if provided
-            platform_name = row.get("platform", "").strip().lower()
-            username = row.get("username", "").strip()
             if platform_name and username and platform_name in ("tiktok", "instagram", "youtube"):
                 followers_str = row.get("followers", "")
                 followers = int(followers_str) if followers_str and str(followers_str).isdigit() else None
@@ -512,4 +545,10 @@ async def import_influencers_from_rows(
             errors.append(f"Row {i + 1}: {str(e)}")
             skipped += 1
 
-    return {"total_rows": len(rows), "imported": imported, "skipped": skipped, "errors": errors}
+    return {
+        "total_rows": len(rows),
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "imported_without_email_ids": imported_without_email_ids,
+    }

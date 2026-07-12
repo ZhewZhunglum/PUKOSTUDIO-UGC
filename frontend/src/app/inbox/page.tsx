@@ -397,7 +397,7 @@ export default function InboxPage() {
         <div className="ds-between" style={{ marginBottom: 4 }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>工作流</div>
-            <h1 className="h-1">收件箱</h1>
+            <h1 className="ds-h1">收件箱</h1>
             <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
               入站回复会自动识别意图并生成待审核草稿，确认后再发给达人。
             </p>

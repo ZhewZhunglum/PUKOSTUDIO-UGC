@@ -405,7 +405,7 @@ export default function DiscoveryPage() {
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>工作流</div>
             <div className="ds-row" style={{ gap: 8, marginBottom: 6 }}>
-              <h1 className="h-1">发现达人</h1>
+              <h1 className="ds-h1">发现达人</h1>
               <span className="ds-tag ds-tag-accent"><Sparkles className="h-3 w-3" />API 自动建联</span>
             </div>
             <p className="ds-body" style={{ color: "var(--ink-3)", maxWidth: 560 }}>

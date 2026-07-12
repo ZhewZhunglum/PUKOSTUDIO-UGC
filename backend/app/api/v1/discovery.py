@@ -14,6 +14,7 @@ from app.dependencies import get_current_user
 from app.integrations.scrapers.manager import get_suggested_hashtags, run_scrape_job
 from app.integrations.woto import WotoAPIError, WotoConfigurationError
 from app.models.user import User
+from app.schemas.email_dig import EmailDigJobCreate, EmailDigJobResponse
 from app.schemas.woto import (
     WotoCostEstimateResponse,
     WotoDictionaryItem,
@@ -22,7 +23,7 @@ from app.schemas.woto import (
     WotoSyncJobCreate,
     WotoSyncJobResponse,
 )
-from app.services import woto_pricing_service, woto_service
+from app.services import email_dig_service, woto_pricing_service, woto_service
 
 router = APIRouter()
 
@@ -138,6 +139,44 @@ async def get_hashtag_suggestions(
         "platform": platform,
         "hashtags": get_suggested_hashtags(platform),
     }
+
+
+@router.post("/email-dig", response_model=EmailDigJobResponse, status_code=202)
+async def create_email_dig_job(
+    data: EmailDigJobCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue a batch public-profile email extraction (creator-finder port).
+
+    Accepts free-form entries (usernames / profile links) and/or existing
+    influencer ids to backfill. Results write back into the influencer pool.
+    """
+    job = await email_dig_service.create_job(db, current_user.team_id, data)
+    await db.commit()
+
+    from app.workers.email_dig_tasks import run_email_dig
+
+    run_email_dig.delay(str(job.id))
+    return job
+
+
+@router.get("/email-dig", response_model=list[EmailDigJobResponse])
+async def list_email_dig_jobs(
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await email_dig_service.list_jobs(db, current_user.team_id, limit=limit)
+
+
+@router.get("/email-dig/{job_id}", response_model=EmailDigJobResponse)
+async def get_email_dig_job(
+    job_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await email_dig_service.get_job(db, current_user.team_id, job_id)
 
 
 @router.get("/woto/quota", response_model=WotoQuotaResponse)

@@ -72,6 +72,11 @@ class InfluencerResponse(BaseModel):
     name: str
     email: str | None
     email_verified: bool
+    phone: str | None = None
+    email_source: str | None = None
+    phone_source: str | None = None
+    email_dig_status: str | None = None
+    email_dig_at: datetime | None = None
     avatar_url: str | None
     niche: str | None
     country: str | None
@@ -99,6 +104,9 @@ class InfluencerImportResponse(BaseModel):
     imported: int
     skipped: int
     errors: list[str]
+    # Newly created influencers without an email; the UI offers to run email
+    # extraction on exactly these right after import.
+    imported_without_email_ids: list[str] = []
 
 
 class BulkTagRequest(BaseModel):

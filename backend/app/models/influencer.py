@@ -55,6 +55,16 @@ class Influencer(BaseModel):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Where a batch job sourced the contact from: "dig" (free public-profile
+    # crawl) or "woto" (paid backfill). Null = imported/manual.
+    email_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    phone_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Outcome of the last batch email/phone dig ("found" | "no-email" |
+    # "unreachable") — lets the UI mark creators already dug so nobody wastes
+    # time re-digging them.
+    email_dig_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email_dig_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     niche: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     country: Mapped[str | None] = mapped_column(String(2), nullable=True)

@@ -30,7 +30,10 @@ import { downloadExport } from "@/lib/download";
 import { useDebouncedValue } from "@/lib/hooks";
 import type { Campaign, Influencer, PaginatedResponse } from "@/types";
 import {
+  AtSign,
+  Database,
   Download,
+  FileDown,
   LayoutGrid,
   List,
   Loader2,
@@ -40,6 +43,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -49,6 +53,78 @@ const PLATFORM_LABELS: Record<string, string> = {
 };
 
 type ViewMode = "table" | "grid";
+
+type EmailDigJob = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  mode: "dig" | "woto";
+  input_count: number;
+  processed_count: number;
+  found_count: number;
+  phone_found_count: number;
+  updated_count: number;
+  created_count: number;
+  error_message: string | null;
+};
+
+// A creator that was already dug but yielded nothing gets a visible mark so
+// nobody wastes another run on them.
+function DigOutcome({ influencer }: { influencer: Influencer }) {
+  if (!influencer.email_dig_status || influencer.email_dig_status === "found") {
+    return <span className="text-muted-foreground">–</span>;
+  }
+  const digDate = influencer.email_dig_at
+    ? new Date(influencer.email_dig_at).toLocaleDateString("zh-CN")
+    : "";
+  return (
+    <span
+      className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+      title={`批量提取已跑过${digDate ? `（${digDate}）` : ""}，公开页面上没有找到`}
+    >
+      {influencer.email_dig_status === "unreachable" ? "已提取·未触达" : "已提取·未找到"}
+    </span>
+  );
+}
+
+// Tiny provenance tag so dig-found vs Woto-paid contacts are tellable apart at
+// a glance (and countable via the export's *_source columns).
+function SourceTag({ source }: { source: string | null }) {
+  if (!source) return null;
+  const isWoto = source === "woto";
+  return (
+    <span
+      className={`ml-1 rounded px-1 py-px align-middle text-[10px] ${
+        isWoto ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+      }`}
+      title={isWoto ? "通过 Woto 付费库补充" : "公开主页免费提取"}
+    >
+      {isWoto ? "Woto" : "提取"}
+    </span>
+  );
+}
+
+// Niche cells can hold long comma-separated lists (e.g. Woto tags). Render each
+// as a chip in a fixed-width box that wraps between chips and scrolls when it
+// overflows — never char-by-char vertical stacking.
+function NicheCell({ niche }: { niche: string | null }) {
+  if (!niche) return <span className="text-muted-foreground">–</span>;
+  const parts = niche.split(/[,，、]/).map((s) => s.trim().replace(/_/g, " ")).filter(Boolean);
+  return (
+    <div
+      className="flex flex-wrap gap-1 overflow-y-auto"
+      style={{ minWidth: 120, maxWidth: 180, maxHeight: 56 }}
+    >
+      {parts.map((part, i) => (
+        <span
+          key={i}
+          className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+        >
+          {part}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 type InfluencerFormState = {
   name: string;
@@ -128,6 +204,7 @@ function TableSkeletonRows() {
         <tr key={i}>
           <td><Skeleton className="h-4 w-28" /></td>
           <td><Skeleton className="h-4 w-36" /></td>
+          <td><Skeleton className="h-4 w-24" /></td>
           <td><Skeleton className="h-5 w-20 rounded-full" /></td>
           <td><Skeleton className="h-4 w-14" /></td>
           <td><Skeleton className="h-4 w-20" /></td>
@@ -185,6 +262,7 @@ export default function InfluencersPage() {
   const [nicheFilter, setNicheFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [hasEmailFilter, setHasEmailFilter] = useState("");
+  const [digStatusFilter, setDigStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -192,7 +270,14 @@ export default function InfluencersPage() {
   const [saving, setSaving] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [selected, setSelected] = useState<Influencer | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // id → whether that influencer already has an email (outreach needs an
+  // email; batch email extraction is for the ones without).
+  const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({});
+  const selectedIds = Object.keys(selectedMap);
+  const selectedEmailIds = selectedIds.filter((id) => selectedMap[id]);
+  const [digJob, setDigJob] = useState<EmailDigJob | null>(null);
+  const [digStarting, setDigStarting] = useState(false);
+  const digTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [startAfterEnroll, setStartAfterEnroll] = useState(false);
@@ -209,6 +294,7 @@ export default function InfluencersPage() {
     if (nicheFilter) params.niche = nicheFilter;
     if (sourceFilter) params.source = sourceFilter;
     if (hasEmailFilter) params.has_email = hasEmailFilter;
+    if (digStatusFilter) params.dig_status = digStatusFilter;
 
     try {
       const res = await api.get("/influencers", { params });
@@ -220,7 +306,7 @@ export default function InfluencersPage() {
       // so a slow earlier response can't overwrite a newer one.
       if (reqId === reqIdRef.current) setLoading(false);
     }
-  }, [page, debouncedSearch, statusFilter, nicheFilter, sourceFilter, hasEmailFilter, viewMode]);
+  }, [page, debouncedSearch, statusFilter, nicheFilter, sourceFilter, hasEmailFilter, digStatusFilter, viewMode]);
 
   useEffect(() => {
     fetchInfluencers();
@@ -296,13 +382,41 @@ export default function InfluencersPage() {
       const res = await api.post("/influencers/import", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setErrorMsg(`导入完成：${res.data.imported} 成功，${res.data.skipped} 跳过`);
+      const importErrors: string[] = res.data.errors ?? [];
+      setErrorMsg(
+        `导入完成：${res.data.imported} 成功，${res.data.skipped} 跳过` +
+          (importErrors.length ? `。原因示例：${importErrors.slice(0, 2).join("；")}` : ""),
+      );
       await fetchInfluencers();
+      const noEmailIds: string[] = res.data.imported_without_email_ids ?? [];
+      if (
+        noEmailIds.length > 0 &&
+        confirm(`本次导入有 ${noEmailIds.length} 位达人没有邮箱，是否立即为他们批量提取邮箱？`)
+      ) {
+        await startEmailDig(noEmailIds);
+      }
     } catch {
       setErrorMsg("导入失败，请确认文件格式正确");
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  };
+
+  const handleDownloadTemplate = () => {
+    // Canonical import template; other headers (creator-finder exports,
+    // Chinese headers) are auto-mapped by the backend, this is the safe format.
+    const csv = [
+      "name,email,niche,country,platform,username,followers,engagement_rate,avg_views,profile_url",
+      "Jane Creator,jane@example.com,beauty,US,tiktok,janeugc,12000,3.5,800,https://www.tiktok.com/@janeugc",
+    ].join("\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "influencer-import-template.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
   };
 
   const handleExport = async (fmt: "csv" | "xlsx") => {
@@ -378,41 +492,121 @@ export default function InfluencersPage() {
     }
   };
 
-  const toggleSelected = (id: string) => {
-    setSelectedIds((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-    );
+  const toggleSelected = (influencer: Influencer) => {
+    setSelectedMap((current) => {
+      const next = { ...current };
+      if (influencer.id in next) {
+        delete next[influencer.id];
+      } else {
+        next[influencer.id] = Boolean(influencer.email);
+      }
+      return next;
+    });
   };
 
   const togglePageSelected = () => {
     if (!data) return;
-    const idsWithEmail = data.items.filter((item) => item.email).map((item) => item.id);
-    const allSelected = idsWithEmail.length > 0 && idsWithEmail.every((id) => selectedIds.includes(id));
-    setSelectedIds((current) =>
-      allSelected
-        ? current.filter((id) => !idsWithEmail.includes(id))
-        : Array.from(new Set([...current, ...idsWithEmail]))
-    );
+    const pageIds = data.items.map((item) => item.id);
+    const allSelected =
+      pageIds.length > 0 && pageIds.every((id) => id in selectedMap);
+    setSelectedMap((current) => {
+      const next = { ...current };
+      if (allSelected) {
+        for (const id of pageIds) delete next[id];
+      } else {
+        for (const item of data.items) next[item.id] = Boolean(item.email);
+      }
+      return next;
+    });
   };
 
   const handleOutreach = async () => {
-    if (!selectedCampaignId || selectedIds.length === 0) return;
+    if (!selectedCampaignId || selectedEmailIds.length === 0) return;
     setEnrolling(true);
     setErrorMsg(null);
     try {
       const res = await api.post(`/campaigns/${selectedCampaignId}/enroll`, {
-        influencer_ids: selectedIds,
+        influencer_ids: selectedEmailIds,
       });
       if (startAfterEnroll) {
         await api.post(`/campaigns/${selectedCampaignId}/start`);
       }
       setErrorMsg(`已加入外联：${res.data.enrolled} 位达人`);
-      setSelectedIds([]);
+      setSelectedMap({});
       setOutreachOpen(false);
     } catch {
       setErrorMsg("发起外联失败，请确认活动仍处于草稿或暂停状态");
     } finally {
       setEnrolling(false);
+    }
+  };
+
+  const pollDigJob = useCallback((jobId: string) => {
+    if (digTimerRef.current) clearTimeout(digTimerRef.current);
+    digTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await api.get<EmailDigJob>(`/discovery/email-dig/${jobId}`);
+        setDigJob(res.data);
+        if (res.data.status === "completed" || res.data.status === "failed") {
+          await fetchInfluencers();
+          // Selection stays visible during the run so the user can see which
+          // rows are being processed; only a successful run clears it.
+          if (res.data.status === "completed") setSelectedMap({});
+        } else {
+          pollDigJob(jobId);
+        }
+      } catch {
+        pollDigJob(jobId);
+      }
+    }, 3000);
+  }, [fetchInfluencers]);
+
+  useEffect(() => {
+    return () => {
+      if (digTimerRef.current) clearTimeout(digTimerRef.current);
+    };
+  }, []);
+
+  const startEmailDig = async (influencerIds: string[]) => {
+    if (influencerIds.length === 0) return;
+    setDigStarting(true);
+    setErrorMsg(null);
+    try {
+      const res = await api.post<EmailDigJob>("/discovery/email-dig", {
+        influencer_ids: influencerIds,
+      });
+      setDigJob(res.data);
+      pollDigJob(res.data.id);
+    } catch {
+      setErrorMsg("批量提取邮箱任务创建失败，请稍后重试");
+    } finally {
+      setDigStarting(false);
+    }
+  };
+
+  const startWotoBackfill = async (influencerIds: string[]) => {
+    if (influencerIds.length === 0) return;
+    if (
+      !confirm(
+        `将通过 Woto 付费接口为 ${influencerIds.length} 位达人补充邮箱/电话。\n` +
+          "每位达人消耗：1 次搜索（已关联 Woto 的达人免搜索）+ 命中邮箱时 1 次联系方式解锁。\n" +
+          "只回填空邮箱/电话，不覆盖已有数据。确定继续？",
+      )
+    ) {
+      return;
+    }
+    setDigStarting(true);
+    setErrorMsg(null);
+    try {
+      const res = await api.post<EmailDigJob>("/influencers/woto-backfill", {
+        influencer_ids: influencerIds,
+      });
+      setDigJob(res.data);
+      pollDigJob(res.data.id);
+    } catch {
+      setErrorMsg("Woto 补充任务创建失败，请确认已配置 Woto 密钥后重试");
+    } finally {
+      setDigStarting(false);
     }
   };
 
@@ -423,7 +617,7 @@ export default function InfluencersPage() {
         <div className="ds-between" style={{ marginBottom: 4 }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>资产 · 全网达人池</div>
-            <h1 className="h-1">达人管理</h1>
+            <h1 className="ds-h1">达人管理</h1>
             <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
               共 <b className="ds-primary ds-num">{data?.total ?? 0}</b> 位达人 · 支持手动维护、CSV 批量导入和 SOP 初筛
             </p>
@@ -437,6 +631,9 @@ export default function InfluencersPage() {
               </button>
               <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => handleExport("xlsx")}>
                 <Download className="h-[14px] w-[14px]" />导出 Excel
+              </button>
+              <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={handleDownloadTemplate}>
+                <FileDown className="h-[14px] w-[14px]" />下载模板
               </button>
               <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="h-[14px] w-[14px]" />导入 CSV/Excel
@@ -515,6 +712,21 @@ export default function InfluencersPage() {
                 <SelectItem value="false">缺邮箱</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              value={digStatusFilter || "all"}
+              onValueChange={(v) => { setDigStatusFilter(!v || v === "all" ? "" : v); setPage(1); }}
+            >
+              <SelectTrigger className="w-full md:w-40">
+                <SelectValue placeholder="提取状态" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部提取状态</SelectItem>
+                <SelectItem value="none">未提取过</SelectItem>
+                <SelectItem value="found">提取到联系方式</SelectItem>
+                <SelectItem value="no-email">已提取·未找到</SelectItem>
+                <SelectItem value="unreachable">已提取·未触达</SelectItem>
+              </SelectContent>
+            </Select>
 
             {/* View toggle */}
             <div className="flex rounded-md border">
@@ -559,14 +771,89 @@ export default function InfluencersPage() {
         {selectedIds.length > 0 && (
           <div className="ds-card ds-card-pad-sm ds-between">
             <div className="ds-body">
-              已选择 <span className="ds-primary">{selectedIds.length}</span> 位有邮箱达人
+              已选择 <span className="ds-primary">{selectedIds.length}</span> 位达人
+              （{selectedEmailIds.length} 位有邮箱）
             </div>
             <div className="ds-row" style={{ gap: 8 }}>
-              <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => setSelectedIds([])}>清空选择</button>
-              <button className="ds-btn ds-btn-primary ds-btn-sm" onClick={() => setOutreachOpen(true)}>
+              <button className="ds-btn ds-btn-outline ds-btn-sm" onClick={() => setSelectedMap({})}>清空选择</button>
+              <button
+                className="ds-btn ds-btn-outline ds-btn-sm"
+                disabled={digStarting || (digJob !== null && (digJob.status === "queued" || digJob.status === "running"))}
+                onClick={() => startEmailDig(selectedIds)}
+                title="从公开主页挖掘邮箱，只回填空邮箱，不覆盖已有邮箱"
+              >
+                {digStarting ? (
+                  <Loader2 className="h-[14px] w-[14px] animate-spin" />
+                ) : (
+                  <AtSign className="h-[14px] w-[14px]" />
+                )}
+                批量提取邮箱
+              </button>
+              <button
+                className="ds-btn ds-btn-outline ds-btn-sm"
+                disabled={digStarting || (digJob !== null && (digJob.status === "queued" || digJob.status === "running"))}
+                onClick={() => startWotoBackfill(selectedIds)}
+                title="用 Woto 付费数据库补充公开主页找不到的邮箱/电话（只填空，不覆盖）"
+              >
+                <Database className="h-[14px] w-[14px]" />Woto 补邮箱/电话
+              </button>
+              <button
+                className="ds-btn ds-btn-primary ds-btn-sm"
+                disabled={selectedEmailIds.length === 0}
+                onClick={() => setOutreachOpen(true)}
+                title={
+                  selectedEmailIds.length === 0
+                    ? "所选达人都没有邮箱，无法发起外联。请先批量提取或用 Woto 补邮箱"
+                    : `为 ${selectedEmailIds.length} 位有邮箱达人发起外联`
+                }
+              >
                 <MailPlus className="h-[14px] w-[14px]" />发起外联
+                {selectedEmailIds.length > 0 && ` (${selectedEmailIds.length})`}
               </button>
             </div>
+          </div>
+        )}
+
+        {digJob && (
+          <div className="ds-card ds-card-pad-sm ds-between">
+            <div className="ds-body">
+              {(() => {
+                const label = digJob.mode === "woto" ? "Woto 补充" : "提取";
+                if (digJob.status === "completed") {
+                  return (
+                    <>
+                      {label}完成：邮箱 <span className="ds-primary">{digJob.found_count}</span> 个
+                      · 电话 <span className="ds-primary">{digJob.phone_found_count}</span> 个
+                      · 回填 <span className="ds-primary">{digJob.updated_count}</span> 位
+                      {digJob.created_count > 0 && <> · 新建 {digJob.created_count} 位</>}
+                      {digJob.found_count === 0 && digJob.phone_found_count === 0 && (
+                        <> · 未找到的已在表格标记，不必重复{digJob.mode === "woto" ? "补充" : "提取"}</>
+                      )}
+                    </>
+                  );
+                }
+                if (digJob.status === "failed") {
+                  return <>{label}失败：{digJob.error_message || "未知错误"}</>;
+                }
+                return (
+                  <>
+                    <Loader2 className="mr-1.5 inline h-[14px] w-[14px] animate-spin" />
+                    {digJob.mode === "woto" ? "正在通过 Woto 补充邮箱/电话" : "正在提取邮箱/电话"}：
+                    {digJob.processed_count}/{digJob.input_count}
+                    {digJob.found_count > 0 && <> · 已找到 {digJob.found_count}</>}
+                  </>
+                );
+              })()}
+            </div>
+            {(digJob.status === "completed" || digJob.status === "failed") && (
+              <button
+                className="ds-btn ds-btn-outline ds-btn-sm"
+                onClick={() => setDigJob(null)}
+                aria-label="关闭提取结果"
+              >
+                <X className="h-[14px] w-[14px]" />
+              </button>
+            )}
           </div>
         )}
 
@@ -602,15 +889,16 @@ export default function InfluencersPage() {
                     <input
                       type="checkbox"
                       checked={
-                        !!data?.items.some((item) => item.email) &&
-                        data.items.filter((item) => item.email).every((item) => selectedIds.includes(item.id))
+                        !!data?.items.length &&
+                        data.items.every((item) => item.id in selectedMap)
                       }
                       onChange={togglePageSelected}
-                      aria-label="选择当前页有邮箱达人"
+                      aria-label="选择当前页达人"
                     />
                   </th>
                   <th>达人</th>
                   <th>邮箱</th>
+                  <th>电话/WhatsApp</th>
                   <th>平台</th>
                   <th>粉丝</th>
                   <th>层级</th>
@@ -626,7 +914,7 @@ export default function InfluencersPage() {
                   <TableSkeletonRows />
                 ) : !data || data.items.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-muted-foreground">
+                    <td colSpan={12} className="py-12 text-center text-muted-foreground">
                       暂无达人数据，点击&quot;添加达人&quot;或&quot;导入&quot;开始。
                     </td>
                   </tr>
@@ -640,9 +928,8 @@ export default function InfluencersPage() {
                         <td>
                           <input
                             type="checkbox"
-                            checked={selectedIds.includes(influencer.id)}
-                            disabled={!influencer.email}
-                            onChange={() => toggleSelected(influencer.id)}
+                            checked={influencer.id in selectedMap}
+                            onChange={() => toggleSelected(influencer)}
                             aria-label={`选择 ${influencer.name}`}
                           />
                         </td>
@@ -655,7 +942,24 @@ export default function InfluencersPage() {
                           </Link>
                         </td>
                         <td className="text-sm text-muted-foreground">
-                          {influencer.email || "–"}
+                          {influencer.email ? (
+                            <>
+                              {influencer.email}
+                              <SourceTag source={influencer.email_source} />
+                            </>
+                          ) : (
+                            <DigOutcome influencer={influencer} />
+                          )}
+                        </td>
+                        <td className="text-sm text-muted-foreground">
+                          {influencer.phone ? (
+                            <>
+                              {influencer.phone}
+                              <SourceTag source={influencer.phone_source} />
+                            </>
+                          ) : (
+                            <DigOutcome influencer={influencer} />
+                          )}
                         </td>
                         <td>
                           <div className="flex flex-wrap gap-1">
@@ -712,10 +1016,8 @@ export default function InfluencersPage() {
                             )}
                           </div>
                         </td>
-                        <td className="text-sm">
-                          {influencer.niche
-                            ? influencer.niche.replace(/_/g, " ")
-                            : "–"}
+                        <td>
+                          <NicheCell niche={influencer.niche} />
                         </td>
                         <td>
                           <Badge
@@ -942,7 +1244,7 @@ export default function InfluencersPage() {
                 onClick={handleOutreach}
               >
                 {enrolling && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-                加入 {selectedIds.length} 位达人
+                加入 {selectedEmailIds.length} 位有邮箱达人
               </Button>
               {campaigns.length === 0 && (
                 <p className="text-sm text-muted-foreground">

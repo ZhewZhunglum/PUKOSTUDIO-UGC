@@ -129,7 +129,7 @@ export default function ClientInboxPage() {
         <div className="ds-between" style={{ marginBottom: 4 }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>B端客户</div>
-            <h1 className="h-1">客户收件箱</h1>
+            <h1 className="ds-h1">客户收件箱</h1>
             <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
               B 端客户往来邮件的人工回复入口，不含 AI 草稿辅助。
             </p>

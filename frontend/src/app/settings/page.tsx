@@ -639,7 +639,7 @@ function SettingsPageContent() {
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
           <div className="eyebrow" style={{ marginBottom: 8 }}>系统</div>
-          <h1 className="h-1">设置</h1>
+          <h1 className="ds-h1">设置</h1>
           <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
             管理品牌身份、发送策略、AI 协作规则与团队权限。
           </p>

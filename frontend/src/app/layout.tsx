@@ -34,6 +34,10 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       className={`${sans.variable} ${mono.variable} ${sc.variable} h-full antialiased`}
+      // Browser extensions (e.g. QuillBot's data-qb-installed) inject
+      // attributes into <html> before React hydrates, triggering a hydration
+      // mismatch warning in dev. Suppress it for this one element only.
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

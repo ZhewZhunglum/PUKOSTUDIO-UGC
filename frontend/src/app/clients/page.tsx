@@ -222,7 +222,7 @@ export default function ClientsPage() {
         <div className="ds-between" style={{ marginBottom: 4 }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>资产 · B端客户</div>
-            <h1 className="h-1">客户管理</h1>
+            <h1 className="ds-h1">客户管理</h1>
             <p className="ds-body" style={{ marginTop: 4, color: "var(--ink-3)" }}>
               共 <b className="ds-primary ds-num">{data?.total ?? 0}</b> 位客户 · 批发/零售采购商、代理服务客户、品牌合作伙伴
             </p>
