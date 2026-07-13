@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
@@ -113,8 +113,14 @@ def build_search_payload(data: dict[str, Any], page_num: int, page_size: int) ->
     else:
         advanced_keywords = []
         if keyword:
-            advanced_keywords.append({"value": keyword, "exclude": False})
-        advanced_keywords.extend({"value": keyword, "exclude": True} for keyword in exclude_keywords)
+            # Woto treats each advancedKeywordList item independently (OR logic).
+            # A single entry like "supplement/energy/collagen" is matched as a
+            # literal string and returns zero results — split each term into
+            # its own entry.
+            terms = [t.strip() for t in re.split(r"[/,]+", keyword) if t.strip()]
+            for term in terms or [keyword]:
+                advanced_keywords.append({"value": term, "exclude": False})
+        advanced_keywords.extend({"value": kw, "exclude": True} for kw in exclude_keywords)
         if advanced_keywords:
             payload["advancedKeywordList"] = advanced_keywords
 
@@ -538,8 +544,18 @@ async def upsert_woto_candidate(
     return influencer, status
 
 
-async def run_sync_job(job_id: uuid.UUID) -> None:
-    async with async_session() as db:
+async def run_sync_job(
+    job_id: uuid.UUID,
+    session_factory: async_sessionmaker | None = None,
+) -> None:
+    """Execute a Woto sync job.
+
+    Callers running under asyncio.run() (e.g. Celery tasks) should pass a
+    NullPool-backed session_factory so concurrent invocations don't share
+    asyncpg connections across event-loop boundaries.
+    """
+    _session = session_factory or async_session
+    async with _session() as db:
         job = await db.get(WotoSyncJob, job_id)
         if not job:
             return
@@ -609,6 +625,10 @@ async def run_sync_job(job_id: uuid.UUID) -> None:
                                     metadata={"channel_uid": str(channel_uid)},
                                 )
                                 raw_detail = detail_payload.get("data")
+                                # Woto bloggerDetail returns data as a list[dict] on
+                                # some platforms/versions — unwrap the first element.
+                                if isinstance(raw_detail, list) and raw_detail:
+                                    raw_detail = raw_detail[0]
                                 if isinstance(raw_detail, dict):
                                     detail_data = raw_detail
                             except (WotoAPIError, WotoConfigurationError) as exc:

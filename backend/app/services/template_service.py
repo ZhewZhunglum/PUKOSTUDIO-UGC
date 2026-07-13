@@ -1,11 +1,13 @@
 import re
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.html_sanitize import sanitize_html
+from app.models.campaign import CampaignStep
+from app.models.client_campaign import ClientCampaignStep
 from app.models.template import EmailTemplate, TemplateCategory
 from app.schemas.template import TemplateCreate, TemplateUpdate
 
@@ -172,6 +174,27 @@ async def delete_template(
     template = await get_template(db, template_id, team_id)
     if template.is_library:
         raise BadRequestException("Library templates cannot be deleted")
+    # The template_id FKs on campaign steps have no ON DELETE action, so
+    # deleting a template still wired into a campaign would 500 with an
+    # IntegrityError. Surface a clear error instead.
+    step_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(CampaignStep)
+            .where(CampaignStep.template_id == template_id)
+        )
+    ).scalar_one()
+    client_step_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ClientCampaignStep)
+            .where(ClientCampaignStep.template_id == template_id)
+        )
+    ).scalar_one()
+    if step_count or client_step_count:
+        raise BadRequestException(
+            "Template is in use by campaign steps; remove it from those campaigns first"
+        )
     await db.delete(template)
 
 

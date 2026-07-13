@@ -37,6 +37,24 @@ def test_build_search_payload_maps_keyword_filters():
     assert payload["pageNum"] == 2
 
 
+def test_build_search_payload_splits_compound_keywords():
+    payload = build_search_payload(
+        {
+            "search_type": "KEYWORD",
+            "keyword": "supplement/energy, collagen",
+            "exclude_keywords": [],
+        },
+        page_num=1,
+        page_size=20,
+    )
+
+    assert payload["advancedKeywordList"] == [
+        {"value": "supplement", "exclude": False},
+        {"value": "energy", "exclude": False},
+        {"value": "collagen", "exclude": False},
+    ]
+
+
 def test_normalize_candidate_prefers_contact_email_and_woto_ids():
     candidate = normalize_candidate(
         "youtube",
