@@ -1,11 +1,13 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.tabular import normalize_format, tabular_response
 from app.dependencies import get_current_user
+from app.models.campaign import Campaign, CampaignInfluencer
 from app.models.user import User
 from app.schemas.ai import CampaignAIPlaybookResponse, CampaignAIPlaybookUpsert
 from app.schemas.campaign import (
@@ -35,6 +37,21 @@ async def create_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     return await campaign_service.create_campaign(db, current_user.team_id, data)
+
+
+@router.get("/contacted-influencer-ids")
+async def get_contacted_influencer_ids(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return IDs of influencers already enrolled in any campaign (二次建联 detection)."""
+    result = await db.execute(
+        select(distinct(CampaignInfluencer.influencer_id))
+        .join(Campaign, Campaign.id == CampaignInfluencer.campaign_id)
+        .where(Campaign.team_id == current_user.team_id)
+    )
+    ids = [str(influencer_id) for influencer_id in result.scalars().all()]
+    return {"influencer_ids": ids}
 
 
 @router.get("/{campaign_id}", response_model=CampaignResponse)

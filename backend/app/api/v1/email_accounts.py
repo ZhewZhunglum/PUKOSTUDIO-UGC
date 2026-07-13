@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -10,12 +10,14 @@ from app.core.exceptions import NotFoundException
 from app.core.html_sanitize import sanitize_html
 from app.dependencies import get_current_user
 from app.integrations.email.manager import render_signature_html
+from app.models.client_email_message import ClientEmailMessage
 from app.models.email_account import (
     EmailAccount,
     EmailHealthStatus,
     EmailProviderType,
     SignatureMode,
 )
+from app.models.email_message import EmailMessage
 from app.models.user import User
 from app.schemas.email import (
     EmailAccountCreate,
@@ -168,6 +170,18 @@ async def delete_email_account(
     db: AsyncSession = Depends(get_db),
 ):
     account = await _get_account(db, current_user.team_id, account_id)
+    # Detach message history before deleting: the FKs have no ON DELETE action,
+    # so deleting an account with sent mail would raise an IntegrityError.
+    await db.execute(
+        update(EmailMessage)
+        .where(EmailMessage.email_account_id == account_id)
+        .values(email_account_id=None)
+    )
+    await db.execute(
+        update(ClientEmailMessage)
+        .where(ClientEmailMessage.email_account_id == account_id)
+        .values(email_account_id=None)
+    )
     await db.delete(account)
 
 
