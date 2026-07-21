@@ -5,11 +5,15 @@ import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/layout/app-layout";
 import api from "@/lib/api";
 import { downloadExport } from "@/lib/download";
-import type { DashboardData } from "@/types";
-import { ArrowRight, Download, Plus, TrendingUp, TrendingDown } from "lucide-react";
+import type { Campaign, DashboardData } from "@/types";
+import { ArrowRight, Download, Plus } from "lucide-react";
 
 function fmtNum(n: number) {
   return n >= 1000 ? n.toLocaleString("zh-CN") : String(n);
+}
+
+function rate(numerator: number, denominator: number) {
+  return denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
 }
 
 function Sparkline({ values, width = 88, height = 28, color = "var(--ink-3)" }: {
@@ -24,17 +28,6 @@ function Sparkline({ values, width = 88, height = 28, color = "var(--ink-3)" }: 
     <svg width={width} height={height} style={{ display: "block" }}>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
-  );
-}
-
-function Delta({ v, suffix = "%" }: { v: number | null; suffix?: string }) {
-  if (v == null) return null;
-  const up = v > 0, flat = v === 0;
-  return (
-    <span className={`ds-stat-delta ${flat ? "flat" : up ? "up" : "down"}`}>
-      {!flat && (up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />)}
-      {up ? "+" : ""}{v}{suffix}
-    </span>
   );
 }
 
@@ -139,13 +132,15 @@ function NicheList({ rows }: { rows: { name: string; value: number; pct: number 
   );
 }
 
-const SPARKS = {
-  sent:   [42, 58, 70, 60, 86, 94, 78, 102],
-  open:   [22, 30, 38, 35, 44, 49, 45, 56],
-  reply:  [4, 7, 9, 8, 11, 14, 12, 17],
-  bounce: [3, 2, 2, 4, 3, 2, 1, 1],
-};
+/** Sample-data tag shared by the four dashboard panels with no real backing
+ * endpoint yet (funnel / tier / niche / activity feed) — makes it visually
+ * unambiguous that these numbers are illustrative, not live. */
+function SampleTag() {
+  return <span className="ds-tag" title="尚无对应后端接口，展示示例数据">示例数据</span>;
+}
 
+// Illustrative only — no backend endpoint computes conversion funnel, follower
+// tiers, niche distribution, or an activity feed yet. See SampleTag above.
 const STATIC_FUNNEL = [
   { label: "已发送", value: 8423, pct: 100 },
   { label: "已送达", value: 7980, pct: 95 },
@@ -171,15 +166,37 @@ const STATIC_NICHES = [
   { name: "Omega-3 鱼油", value: 228, pct: 8 },
 ];
 
+const SAMPLE_ACTIVITY = [
+  { icon: "reply",   text: "Ava Carter 回复了 Protein-V3 活动",       time: "3 分钟前" },
+  { icon: "send",    text: "Omega-3 EU 活动批量发送 86 封邮件",         time: "18 分钟前" },
+  { icon: "sparkle", text: "AI 生成 12 封回复草稿等待审核",              time: "42 分钟前" },
+  { icon: "check",   text: "Collagen-V2 与 Sarah Mitchell 签约成功",   time: "1 小时前" },
+  { icon: "search",  text: "发现达人任务完成，新增 34 位达人",            time: "2 小时前" },
+];
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+
+  const [activeCampaigns, setActiveCampaigns] = useState<Campaign[]>([]);
+  const [campaignsLoading, setCampaignsLoading] = useState(true);
 
   useEffect(() => {
     api.get("/analytics/dashboard")
       .then((res) => setData(res.data))
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    api.get("/campaigns")
+      .then((res) => {
+        const list: Campaign[] = res.data;
+        setActiveCampaigns(list.filter((c) => c.status === "active"));
+      })
+      .catch(() => {})
+      .finally(() => setCampaignsLoading(false));
   }, []);
 
   const handleExport = async (fmt: "csv" | "xlsx") => {
@@ -192,15 +209,14 @@ export default function DashboardPage() {
   };
 
   const stats = data?.stats;
-  const metrics: { label: string; value: number; delta: number; spark: number[]; suffix: string; inverted?: boolean }[] = [
-    { label: "已发送邮件", value: stats?.emails_sent ?? 8423,        delta: 12,   spark: SPARKS.sent,   suffix: ""  },
-    { label: "打开率",     value: stats?.open_rate   ?? 27.4,        delta: 3,    spark: SPARKS.open,   suffix: "%" },
-    { label: "回复率",     value: stats?.reply_rate  ?? 7.5,         delta: 1,    spark: SPARKS.reply,  suffix: "%" },
-    { label: "退信率",     value: stats?.bounce_rate ?? 1.2,         delta: -0.3, spark: SPARKS.bounce, suffix: "%", inverted: true },
-  ];
+  const recentDaily = (data?.daily ?? []).slice(-8);
 
-  interface Campaign { id: string; name: string; status: string; emails_sent: number; open_rate: number; reply_count: number; target: number }
-  const activeCampaigns: Campaign[] = [];
+  const metrics: { label: string; value: number | undefined; spark: number[]; suffix: string }[] = [
+    { label: "已发送邮件", value: stats?.emails_sent, spark: recentDaily.map((d) => d.emails_sent), suffix: "" },
+    { label: "打开率",     value: stats?.open_rate,   spark: recentDaily.map((d) => rate(d.emails_opened, d.emails_sent)),  suffix: "%" },
+    { label: "回复率",     value: stats?.reply_rate,  spark: recentDaily.map((d) => rate(d.emails_replied, d.emails_sent)), suffix: "%" },
+    { label: "退信率",     value: stats?.bounce_rate, spark: recentDaily.map((d) => rate(d.emails_bounced, d.emails_sent)), suffix: "%" },
+  ];
 
   return (
     <AppLayout>
@@ -236,18 +252,19 @@ export default function DashboardPage() {
               <div className="ds-stat-label">{m.label}</div>
               <div className="ds-row" style={{ justifyContent: "space-between", alignItems: "flex-end", marginTop: 2 }}>
                 <div className="ds-stat-value">
-                  {typeof m.value === "number" && m.value >= 1000 ? fmtNum(m.value) : m.value}
-                  {m.suffix && <span className="ds-stat-unit">{m.suffix}</span>}
+                  {loading || loadError || m.value == null ? (
+                    <span style={{ color: "var(--ink-4)" }} title={loadError ? "数据加载失败" : undefined}>—</span>
+                  ) : (
+                    <>
+                      {m.value >= 1000 ? fmtNum(m.value) : m.value}
+                      {m.suffix && <span className="ds-stat-unit">{m.suffix}</span>}
+                    </>
+                  )}
                 </div>
-                <Sparkline values={[...m.spark]} color={
-                  m.inverted
-                    ? (m.delta < 0 ? "var(--ok)" : "var(--destructive)")
-                    : (m.delta < 0 ? "var(--destructive)" : "var(--ok)")
-                } />
+                <Sparkline values={m.spark} />
               </div>
               <div className="ds-row" style={{ marginTop: 6 }}>
-                <Delta v={m.delta} suffix={m.suffix || ""} />
-                <span className="ds-caption" style={{ color: "var(--ink-4)" }}>vs. 上周</span>
+                <span className="ds-caption" style={{ color: "var(--ink-4)" }}>近 30 天</span>
               </div>
             </div>
           ))}
@@ -280,7 +297,7 @@ export default function DashboardPage() {
                 <div className="ds-h3">转化漏斗</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>累计 · 从发送到签约</div>
               </div>
-              <span className="ds-tag">全部</span>
+              <SampleTag />
             </div>
             <div style={{ padding: "16px 20px 20px" }}>
               <FunnelChart rows={STATIC_FUNNEL} />
@@ -294,63 +311,60 @@ export default function DashboardPage() {
             <div className="ds-card-section ds-between">
               <div>
                 <div className="ds-h3">进行中的活动</div>
-                <div className="ds-caption" style={{ color: "var(--ink-3)" }}>按昨日表现排序</div>
+                <div className="ds-caption" style={{ color: "var(--ink-3)" }}>状态为「进行中」的活动</div>
               </div>
               <Link href="/campaigns" className="ds-btn ds-btn-ghost ds-btn-sm">
                 查看全部 <ArrowRight className="h-[13px] w-[13px]" />
               </Link>
             </div>
-            {activeCampaigns.length === 0 ? (
+            {campaignsLoading ? (
+              <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--ink-3)", fontSize: 13 }}>
+                加载中…
+              </div>
+            ) : activeCampaigns.length === 0 ? (
               <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--ink-3)", fontSize: 13 }}>
                 暂无进行中的活动 ·{" "}
                 <Link href="/campaigns/new" style={{ color: "var(--da-accent)", fontWeight: 600 }}>新建活动</Link>
               </div>
             ) : (
               activeCampaigns.slice(0, 3).map((c, i) => (
-                <div key={c.id} style={{
-                  padding: "16px 20px",
-                  borderBottom: i < 2 ? "1px solid var(--hairline-soft)" : 0,
-                  display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px",
-                  gap: 16, alignItems: "center",
-                }}>
-                  <div>
-                    <div className="ds-row" style={{ gap: 8 }}>
-                      <span className="ds-dot ds-dot-ok" />
-                      <span className="ds-primary" style={{ fontSize: 13.5, fontWeight: 600 }}>{c.name}</span>
+                <Link
+                  key={c.id}
+                  href={`/campaigns/${c.id}`}
+                  style={{
+                    padding: "16px 20px",
+                    borderBottom: i < Math.min(activeCampaigns.length, 3) - 1 ? "1px solid var(--hairline-soft)" : 0,
+                    display: "grid", gridTemplateColumns: "1fr 90px 90px",
+                    gap: 16, alignItems: "center",
+                    textDecoration: "none",
+                  }}
+                >
+                  <div className="ds-row" style={{ gap: 8 }}>
+                    <span className="ds-dot ds-dot-ok" />
+                    <span className="ds-primary" style={{ fontSize: 13.5, fontWeight: 600 }}>{c.name}</span>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div className="ds-caption" style={{ marginBottom: 2, color: "var(--ink-3)" }}>步骤</div>
+                    <div className="ds-num ds-primary" style={{ fontSize: 14, fontWeight: 600 }}>{c.steps?.length ?? 0}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div className="ds-caption" style={{ marginBottom: 2, color: "var(--ink-3)" }}>开始于</div>
+                    <div className="ds-num ds-primary" style={{ fontSize: 13 }}>
+                      {c.started_at ? new Date(c.started_at).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) : "—"}
                     </div>
                   </div>
-                  {[["发送", String(c.emails_sent)], ["打开率", `${c.open_rate?.toFixed(1)}%`], ["回复", String(c.reply_count)]].map(([label, val]) => (
-                    <div key={label} style={{ textAlign: "right" }}>
-                      <div className="ds-caption" style={{ marginBottom: 2, color: "var(--ink-3)" }}>{label}</div>
-                      <div className="ds-num ds-primary" style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
-                    </div>
-                  ))}
-                  <div>
-                    <div className="ds-caption" style={{ marginBottom: 5, color: "var(--ink-3)" }}>
-                      进度 {Math.round((c.emails_sent / Math.max(c.target, 1)) * 100)}%
-                    </div>
-                    <div className="ds-progress ds-progress-accent">
-                      <span style={{ width: Math.min(100, (c.emails_sent / Math.max(c.target, 1)) * 100) + "%" }} />
-                    </div>
-                  </div>
-                </div>
+                </Link>
               ))
             )}
           </div>
 
           <div className="ds-card">
             <div className="ds-card-section ds-between">
-              <div className="ds-h3">最近活动</div>
-              <button className="ds-btn ds-btn-ghost ds-btn-sm">日志</button>
+              <div className="ds-h3">最近动态</div>
+              <SampleTag />
             </div>
             <div style={{ padding: "4px 0" }}>
-              {[
-                { icon: "reply",   text: "Ava Carter 回复了 Protein-V3 活动",       time: "3 分钟前" },
-                { icon: "send",    text: "Omega-3 EU 活动批量发送 86 封邮件",         time: "18 分钟前" },
-                { icon: "sparkle", text: "AI 生成 12 封回复草稿等待审核",              time: "42 分钟前" },
-                { icon: "check",   text: "Collagen-V2 与 Sarah Mitchell 签约成功",   time: "1 小时前" },
-                { icon: "search",  text: "发现达人任务完成，新增 34 位达人",            time: "2 小时前" },
-              ].map((a, i) => (
+              {SAMPLE_ACTIVITY.map((a, i) => (
                 <div key={i} className="ds-row" style={{ padding: "12px 20px", alignItems: "flex-start", gap: 12 }}>
                   <div style={{
                     width: 28, height: 28, borderRadius: 7,
@@ -379,9 +393,11 @@ export default function DashboardPage() {
             <div className="ds-between" style={{ marginBottom: 16 }}>
               <div>
                 <div className="ds-h3">达人粉丝层级</div>
-                <div className="ds-caption" style={{ color: "var(--ink-3)" }}>共 {fmtNum(2847)} 位达人</div>
+                <div className="ds-caption" style={{ color: "var(--ink-3)" }}>
+                  共 {fmtNum(stats?.total_influencers ?? 0)} 位达人 · 层级分布为示例
+                </div>
               </div>
-              <span className="ds-tag">资产</span>
+              <SampleTag />
             </div>
             <TierBars data={STATIC_TIERS} />
           </div>
@@ -391,7 +407,7 @@ export default function DashboardPage() {
                 <div className="ds-h3">类目分布</div>
                 <div className="ds-caption" style={{ color: "var(--ink-3)" }}>保健品细分类目 · Top 6</div>
               </div>
-              <span className="ds-tag">资产</span>
+              <SampleTag />
             </div>
             <NicheList rows={STATIC_NICHES} />
           </div>
