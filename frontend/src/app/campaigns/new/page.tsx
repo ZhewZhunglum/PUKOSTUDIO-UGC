@@ -16,9 +16,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { AttachmentField, uploadAttachmentFiles } from "@/components/shared/AttachmentField";
 import api from "@/lib/api";
 import { SUPPLEMENT_NICHES, getFollowerTier } from "@/lib/constants";
-import type { EmailTemplate, Influencer, PaginatedResponse } from "@/types";
+import type { Attachment, EmailTemplate, Influencer, PaginatedResponse } from "@/types";
 import { ArrowLeft, CheckSquare, Search, Square } from "lucide-react";
 
 function formatFollowers(n: number | null | undefined): string {
@@ -48,7 +49,14 @@ export default function NewCampaignPage() {
   // follow-up steps (template + delay in days, no reply required to stop —
   // replies stop follow-ups automatically).
   const [abSubjectB, setAbSubjectB] = useState("");
-  const [followUps, setFollowUps] = useState<{ template_id: string; delay_days: number }[]>([]);
+  const [initialAttachments, setInitialAttachments] = useState<Attachment[]>([]);
+  const [followUps, setFollowUps] = useState<
+    { template_id: string; delay_days: number; attachments: Attachment[] }[]
+  >([]);
+  // Tracks which attachment field is currently uploading, so only that
+  // field's button shows a spinner ("initial" for the first step, or the
+  // follow-up's array index).
+  const [uploadingKey, setUploadingKey] = useState<"initial" | number | null>(null);
 
   // Optional send window (recipient-local hours).
   const [windowEnabled, setWindowEnabled] = useState(false);
@@ -111,8 +119,39 @@ export default function NewCampaignPage() {
     setSelectedInfluencerIds((cur) => cur.filter((id) => !ids.has(id)));
   };
 
-  const updateFollowUp = (index: number, patch: Partial<{ template_id: string; delay_days: number }>) => {
+  const updateFollowUp = (
+    index: number,
+    patch: Partial<{ template_id: string; delay_days: number; attachments: Attachment[] }>
+  ) => {
     setFollowUps((cur) => cur.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  };
+
+  const addAttachments = async (key: "initial" | number, files: FileList) => {
+    setUploadingKey(key);
+    try {
+      const uploaded = await uploadAttachmentFiles(files);
+      if (key === "initial") {
+        setInitialAttachments((cur) => [...cur, ...uploaded]);
+      } else {
+        updateFollowUp(key, {
+          attachments: [...(followUps[key]?.attachments ?? []), ...uploaded],
+        });
+      }
+    } catch {
+      setError("附件上传失败（请检查文件类型与大小）");
+    } finally {
+      setUploadingKey(null);
+    }
+  };
+
+  const removeAttachment = (key: "initial" | number, id: string) => {
+    if (key === "initial") {
+      setInitialAttachments((cur) => cur.filter((a) => a.id !== id));
+    } else {
+      updateFollowUp(key, {
+        attachments: (followUps[key]?.attachments ?? []).filter((a) => a.id !== id),
+      });
+    }
   };
 
   const handleCreate = async () => {
@@ -147,12 +186,14 @@ export default function NewCampaignPage() {
             template_id: templateId,
             delay_days: 0,
             condition: abSubjectB.trim() ? { ab_subject_b: abSubjectB.trim() } : null,
+            attachment_ids: initialAttachments.map((a) => a.id),
           },
           ...followUps.map((f, i) => ({
             step_order: i + 2,
             step_type: "followup",
             template_id: f.template_id,
             delay_days: Math.max(1, f.delay_days),
+            attachment_ids: f.attachments.map((a) => a.id),
           })),
         ],
       });
@@ -355,6 +396,18 @@ export default function NewCampaignPage() {
                     placeholder="B 版主题，留空则不做 A/B 测试"
                   />
                 </div>
+                <div>
+                  <Label>附件（可选）</Label>
+                  <div className="mt-1.5">
+                    <AttachmentField
+                      attachments={initialAttachments}
+                      uploading={uploadingKey === "initial"}
+                      inputId="attachments-initial"
+                      onAdd={(files) => addAttachments("initial", files)}
+                      onRemove={(id) => removeAttachment("initial", id)}
+                    />
+                  </div>
+                </div>
               </div>
             )}
 
@@ -370,7 +423,9 @@ export default function NewCampaignPage() {
                   variant="outline"
                   size="sm"
                   disabled={followUps.length >= 4}
-                  onClick={() => setFollowUps((cur) => [...cur, { template_id: "", delay_days: 3 }])}
+                  onClick={() =>
+                    setFollowUps((cur) => [...cur, { template_id: "", delay_days: 3, attachments: [] }])
+                  }
                 >
                   + 添加跟进
                 </Button>
@@ -379,41 +434,50 @@ export default function NewCampaignPage() {
                 <p className="text-sm text-muted-foreground">未配置跟进，仅发送首封邮件。</p>
               ) : (
                 followUps.map((f, i) => (
-                  <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border bg-background p-3">
-                    <span className="pb-2 text-sm font-medium">第 {i + 2} 封</span>
-                    <div className="w-28">
-                      <Label className="text-xs">延迟（天）</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={String(f.delay_days)}
-                        onChange={(e) => updateFollowUp(i, { delay_days: Number(e.target.value) || 1 })}
-                        className="mt-1"
-                      />
-                    </div>
-                    <div className="min-w-[220px] flex-1">
-                      <Label className="text-xs">模板</Label>
-                      <Select
-                        value={f.template_id || undefined}
-                        onValueChange={(v) => v && updateFollowUp(i, { template_id: v })}
+                  <div key={i} className="space-y-2 rounded-lg border bg-background p-3">
+                    <div className="flex flex-wrap items-end gap-2">
+                      <span className="pb-2 text-sm font-medium">第 {i + 2} 封</span>
+                      <div className="w-28">
+                        <Label className="text-xs">延迟（天）</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={String(f.delay_days)}
+                          onChange={(e) => updateFollowUp(i, { delay_days: Number(e.target.value) || 1 })}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div className="min-w-[220px] flex-1">
+                        <Label className="text-xs">模板</Label>
+                        <Select
+                          value={f.template_id || undefined}
+                          onValueChange={(v) => v && updateFollowUp(i, { template_id: v })}
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="选择跟进模板" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {templates.map((tmpl) => (
+                              <SelectItem key={tmpl.id} value={tmpl.id}>{tmpl.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setFollowUps((cur) => cur.filter((_, x) => x !== i))}
                       >
-                        <SelectTrigger className="mt-1">
-                          <SelectValue placeholder="选择跟进模板" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {templates.map((tmpl) => (
-                            <SelectItem key={tmpl.id} value={tmpl.id}>{tmpl.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        移除
+                      </Button>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setFollowUps((cur) => cur.filter((_, x) => x !== i))}
-                    >
-                      移除
-                    </Button>
+                    <AttachmentField
+                      attachments={f.attachments}
+                      uploading={uploadingKey === i}
+                      inputId={`attachments-followup-${i}`}
+                      onAdd={(files) => addAttachments(i, files)}
+                      onRemove={(id) => removeAttachment(i, id)}
+                    />
                   </div>
                 ))
               )}
