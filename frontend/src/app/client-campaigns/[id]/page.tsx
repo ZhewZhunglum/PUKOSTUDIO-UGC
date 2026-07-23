@@ -55,6 +55,7 @@ type CampaignStats = {
   total_enrolled?: number;
   emails_sent?: number;
   open_rate?: number;
+  click_rate?: number;
   reply_rate?: number;
   ab_test?: Record<string, ABVariantStats> | null;
 };
@@ -263,7 +264,7 @@ export default function ClientCampaignDetailPage() {
         </div>
 
         {stats && (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <Card className="p-4">
               <p className="text-sm text-muted-foreground">已入组</p>
               <p className="text-2xl font-bold">{stats.total_enrolled || 0}</p>
@@ -275,6 +276,18 @@ export default function ClientCampaignDetailPage() {
             <Card className="p-4">
               <p className="text-sm text-muted-foreground">打开率</p>
               <p className="text-2xl font-bold">{Number(stats.open_rate || 0).toFixed(1)}%</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-sm text-muted-foreground">
+                点击率
+                <span
+                  className="ml-1 cursor-help text-muted-foreground/70"
+                  title="邮件正文内链接被点击的比例——不受邮件客户端自动预取打开像素（如 Apple 邮件隐私保护）影响，是比打开率更可靠的真实参与度信号。"
+                >
+                  ⓘ
+                </span>
+              </p>
+              <p className="text-2xl font-bold">{Number(stats.click_rate || 0).toFixed(1)}%</p>
             </Card>
             <Card className="p-4">
               <p className="text-sm text-muted-foreground">回复率</p>

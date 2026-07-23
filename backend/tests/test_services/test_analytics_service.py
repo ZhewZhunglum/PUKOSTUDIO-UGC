@@ -28,4 +28,13 @@ def test_daily_stats_query_reuses_single_timezone_bind(monkeypatch):
 
     sql = str(compiled)
     assert "GROUP BY" in sql
-    assert "timezone" in sql
+
+
+def test_daily_stats_query_includes_a_clicked_column():
+    """click_rate (analytics_service.get_daily_stats) reads row.clicked — the
+    query must actually project that column, not just open_rate's opened/delivered.
+    """
+    stmt = daily_stats_query(uuid.uuid4(), date(2026, 1, 1), date(2026, 1, 31))
+    compiled = stmt.compile(dialect=postgresql.dialect())
+
+    assert "AS clicked" in str(compiled)

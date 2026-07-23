@@ -392,6 +392,7 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: uuid.UUID) -> dict:
         EmailStatus.opened, 0
     ) + status_counts.get(EmailStatus.clicked, 0)
     opened = status_counts.get(EmailStatus.opened, 0) + status_counts.get(EmailStatus.clicked, 0)
+    clicked = status_counts.get(EmailStatus.clicked, 0)
     bounced = status_counts.get(EmailStatus.bounced, 0)
 
     # Count enrollees and replies in a single query
@@ -448,8 +449,10 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: uuid.UUID) -> dict:
         "emails_sent": sent,
         "emails_delivered": delivered,
         "emails_opened": opened,
+        "emails_clicked": clicked,
         "emails_replied": total_replied,
         "emails_bounced": bounced,
         "open_rate": (opened / delivered * 100) if delivered > 0 else 0,
+        "click_rate": (clicked / delivered * 100) if delivered > 0 else 0,
         "reply_rate": (total_replied / sent * 100) if sent > 0 else 0,
     }

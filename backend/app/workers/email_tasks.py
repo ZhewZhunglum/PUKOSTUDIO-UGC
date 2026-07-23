@@ -155,6 +155,7 @@ def send_single_email(
         get_email_sender,
         inject_tracking,
         inject_unsubscribe,
+        rewrite_links_for_tracking,
         select_best_account,
         unsubscribe_headers,
     )
@@ -365,8 +366,11 @@ def send_single_email(
         db.commit()
         db.refresh(message)
 
-        # Inject unsubscribe footer then the tracking pixel (pixel stays last).
-        final_body = inject_unsubscribe(signed_body, str(message.id), settings.base_url)
+        # Rewrite content links to a click-tracking redirect BEFORE adding the
+        # unsubscribe footer, so that link is never itself wrapped. Then inject
+        # the unsubscribe footer, then the open-tracking pixel (pixel stays last).
+        final_body = rewrite_links_for_tracking(signed_body, str(message.id), settings.base_url)
+        final_body = inject_unsubscribe(final_body, str(message.id), settings.base_url)
         final_body = inject_tracking(final_body, str(message.id), settings.base_url)
         # Inline CSS as the last transform before the network call, so
         # WYSIWYG-authored <style> blocks/classes render consistently across

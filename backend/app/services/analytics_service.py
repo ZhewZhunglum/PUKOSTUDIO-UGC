@@ -88,6 +88,10 @@ async def get_dashboard_stats(
                 EmailMessage.direction == EmailDirection.outbound,
                 EmailMessage.status == EmailStatus.bounced,
             ), 1))).label("bounced"),
+            func.count(case((and_(
+                EmailMessage.direction == EmailDirection.outbound,
+                EmailMessage.status == EmailStatus.clicked,
+            ), 1))).label("clicked"),
             func.count(func.distinct(case(
                 (EmailMessage.direction == EmailDirection.inbound, EmailMessage.influencer_id)
             ))).label("replied"),
@@ -103,6 +107,7 @@ async def get_dashboard_stats(
     sent = stats.sent or 0
     delivered = stats.delivered or 0
     opened = stats.opened or 0
+    clicked = stats.clicked or 0
     bounced = stats.bounced or 0
     emails_replied = stats.replied or 0
 
@@ -113,9 +118,11 @@ async def get_dashboard_stats(
             "emails_sent": sent,
             "emails_delivered": delivered,
             "emails_opened": opened,
+            "emails_clicked": clicked,
             "emails_replied": emails_replied,
             "emails_bounced": bounced,
             "open_rate": round(opened / delivered * 100, 1) if delivered > 0 else 0,
+            "click_rate": round(clicked / delivered * 100, 1) if delivered > 0 else 0,
             "reply_rate": round(emails_replied / sent * 100, 1) if sent > 0 else 0,
             "bounce_rate": round(bounced / sent * 100, 1) if sent > 0 else 0,
         }
@@ -157,6 +164,10 @@ def daily_stats_query(team_id: uuid.UUID, start_date: date, end_date: date):
                 EmailMessage.direction == EmailDirection.outbound,
                 EmailMessage.status == EmailStatus.bounced,
             ), 1))).label("bounced"),
+            func.count(case((and_(
+                EmailMessage.direction == EmailDirection.outbound,
+                EmailMessage.status == EmailStatus.clicked,
+            ), 1))).label("clicked"),
             func.count(case((EmailMessage.direction == EmailDirection.inbound, 1))).label("replied"),
         )
         .where(
@@ -180,6 +191,7 @@ async def get_daily_stats(
             "emails_sent": row.sent or 0,
             "emails_delivered": row.delivered or 0,
             "emails_opened": row.opened or 0,
+            "emails_clicked": row.clicked or 0,
             "emails_replied": row.replied or 0,
             "emails_bounced": row.bounced or 0,
         }

@@ -36,6 +36,9 @@ dependencies = [
     # HTML processing (rich-text editor pipeline)
     "nh3>=0.3.0",
     "premailer>=3.10.0",
+    # Already installed transitively via premailer; declared explicitly since
+    # rewrite_links_for_tracking imports it directly.
+    "lxml>=5.0.0",
     # Utils
     "pydantic[email]>=2.8.0",
     # Scraping

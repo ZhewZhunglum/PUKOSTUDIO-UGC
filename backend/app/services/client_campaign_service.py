@@ -326,6 +326,7 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: uuid.UUID) -> dict:
     opened = status_counts.get(ClientEmailStatus.opened, 0) + status_counts.get(
         ClientEmailStatus.clicked, 0
     )
+    clicked = status_counts.get(ClientEmailStatus.clicked, 0)
     bounced = status_counts.get(ClientEmailStatus.bounced, 0)
 
     ce_result = await db.execute(
@@ -380,8 +381,10 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: uuid.UUID) -> dict:
         "emails_sent": sent,
         "emails_delivered": delivered,
         "emails_opened": opened,
+        "emails_clicked": clicked,
         "emails_replied": total_replied,
         "emails_bounced": bounced,
         "open_rate": (opened / delivered * 100) if delivered > 0 else 0,
+        "click_rate": (clicked / delivered * 100) if delivered > 0 else 0,
         "reply_rate": (total_replied / sent * 100) if sent > 0 else 0,
     }

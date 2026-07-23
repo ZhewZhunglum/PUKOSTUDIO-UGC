@@ -1,8 +1,8 @@
 import base64
 import uuid
 
-from fastapi import APIRouter, Depends, Response
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,3 +89,31 @@ async def track_open(message_id: str, db: AsyncSession = Depends(get_db)):
         media_type="image/png",
         headers={"Cache-Control": "no-store, no-cache, max-age=0"},
     )
+
+
+@router.get("/click/{message_id}")
+async def track_click(
+    message_id: str, url: str = Query(...), db: AsyncSession = Depends(get_db)
+):
+    """Redirect through a click record. A click can't be triggered by mail
+    client image prefetching (unlike the open pixel), so it's a stronger
+    "a human engaged" signal — see rewrite_links_for_tracking."""
+    # Only ever redirect to http(s); anything else (javascript:, data:, a bare
+    # path) is rejected rather than followed, so this endpoint can't be used as
+    # an open redirect to an arbitrary scheme.
+    if not url.startswith(("http://", "https://")):
+        return Response(status_code=400, content="Invalid redirect target")
+
+    try:
+        email_message_id = uuid.UUID(message_id)
+        await update_message_status(
+            db,
+            email_message_id=email_message_id,
+            status=EmailStatus.clicked,
+            event_type=EmailEventType.clicked,
+            raw_data={"source": "click_redirect", "url": url},
+        )
+    except (ValueError, TypeError):
+        pass  # Malformed id — still redirect the recipient to their destination.
+
+    return RedirectResponse(url, status_code=302)

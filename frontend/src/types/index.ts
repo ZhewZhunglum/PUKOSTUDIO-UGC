@@ -387,9 +387,11 @@ export interface DashboardStats {
   emails_sent: number;
   emails_delivered: number;
   emails_opened: number;
+  emails_clicked: number;
   emails_replied: number;
   emails_bounced: number;
   open_rate: number;
+  click_rate: number;
   reply_rate: number;
   bounce_rate: number;
 }
@@ -399,6 +401,7 @@ export interface DailyStats {
   emails_sent: number;
   emails_delivered: number;
   emails_opened: number;
+  emails_clicked: number;
   emails_replied: number;
   emails_bounced: number;
 }

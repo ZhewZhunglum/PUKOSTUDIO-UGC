@@ -1,8 +1,8 @@
 import base64
 import uuid
 
-from fastapi import APIRouter, Depends, Response
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,3 +90,27 @@ async def track_open(message_id: str, db: AsyncSession = Depends(get_db)):
         media_type="image/png",
         headers={"Cache-Control": "no-store, no-cache, max-age=0"},
     )
+
+
+@router.get("/click/{message_id}")
+async def track_click(
+    message_id: str, url: str = Query(...), db: AsyncSession = Depends(get_db)
+):
+    """Redirect through a click record — see tracking.py's track_click for why
+    a click is a stronger engagement signal than the open pixel."""
+    if not url.startswith(("http://", "https://")):
+        return Response(status_code=400, content="Invalid redirect target")
+
+    try:
+        client_email_message_id = uuid.UUID(message_id)
+        await update_client_message_status(
+            db,
+            client_email_message_id=client_email_message_id,
+            status=ClientEmailStatus.clicked,
+            event_type=ClientEmailEventType.clicked,
+            raw_data={"source": "click_redirect", "url": url},
+        )
+    except (ValueError, TypeError):
+        pass
+
+    return RedirectResponse(url, status_code=302)

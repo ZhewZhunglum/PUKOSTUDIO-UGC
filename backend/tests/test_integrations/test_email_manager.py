@@ -1,9 +1,11 @@
 from types import SimpleNamespace
+from urllib.parse import unquote
 
 from app.integrations.email.base import build_mime_root
 from app.integrations.email.manager import (
     finalize_html_for_send,
     inject_tracking,
+    rewrite_links_for_tracking,
     select_best_account,
     unsubscribe_url,
 )
@@ -57,6 +59,44 @@ def test_inject_tracking_honors_track_path():
     result = inject_tracking("<body></body>", "1234", "http://x", track_path="client-track")
 
     assert "/api/v1/client-track/open/1234.png" in result
+
+
+def test_rewrite_links_for_tracking_wraps_content_links():
+    html = '<body><a href="https://example.com/offer">shop</a></body>'
+
+    result = rewrite_links_for_tracking(html, "1234", "http://localhost:8000")
+
+    assert 'href="http://localhost:8000/api/v1/track/click/1234?url=' in result
+    assert "https%3A%2F%2Fexample.com%2Foffer" in result
+    # The original destination must survive round-trip through the redirect,
+    # not just look plausible in the raw string.
+    assert unquote(result.split("url=")[1].split('"')[0]) == "https://example.com/offer"
+
+
+def test_rewrite_links_for_tracking_skips_non_http_links():
+    html = (
+        '<body><a href="mailto:a@b.com">mail</a> '
+        '<a href="tel:+10000000000">call</a> '
+        '<a href="#top">top</a></body>'
+    )
+
+    result = rewrite_links_for_tracking(html, "1234", "http://x")
+
+    assert result == html  # nothing rewritten — output is untouched
+
+
+def test_rewrite_links_for_tracking_honors_track_path():
+    html = '<body><a href="https://example.com">go</a></body>'
+
+    result = rewrite_links_for_tracking(html, "1234", "http://x", track_path="client-track")
+
+    assert "/api/v1/client-track/click/1234?url=" in result
+
+
+def test_rewrite_links_for_tracking_is_a_noop_without_links():
+    html = "<body><p>No links here.</p></body>"
+
+    assert rewrite_links_for_tracking(html, "1234", "http://x") == html
 
 
 def test_unsubscribe_url_default_track_path_unchanged():

@@ -150,6 +150,7 @@ def send_single_client_email(
         get_email_sender,
         inject_tracking,
         inject_unsubscribe,
+        rewrite_links_for_tracking,
         select_best_account,
         unsubscribe_headers,
     )
@@ -338,8 +339,11 @@ def send_single_client_email(
         db.commit()
         db.refresh(message)
 
-        final_body = inject_unsubscribe(
+        final_body = rewrite_links_for_tracking(
             signed_body, str(message.id), settings.base_url, track_path=_TRACK_PATH
+        )
+        final_body = inject_unsubscribe(
+            final_body, str(message.id), settings.base_url, track_path=_TRACK_PATH
         )
         final_body = inject_tracking(
             final_body, str(message.id), settings.base_url, track_path=_TRACK_PATH
