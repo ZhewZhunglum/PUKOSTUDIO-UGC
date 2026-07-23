@@ -20,7 +20,7 @@ from app.models.client_email_message import (
     ClientEmailStatus,
 )
 from app.schemas.client_campaign import ClientCampaignCreate, ClientCampaignUpdate
-from app.services.campaign_service import _validate_steps
+from app.services.campaign_service import _validate_step_attachments, _validate_steps
 
 ALLOWED_UPDATE_FIELDS = {"name", "description", "target_criteria", "schedule_config"}
 
@@ -53,6 +53,7 @@ async def create_campaign(
     db: AsyncSession, team_id: uuid.UUID, data: ClientCampaignCreate
 ) -> ClientCampaign:
     _validate_steps(data.steps)
+    await _validate_step_attachments(db, team_id, data.steps)
 
     campaign = ClientCampaign(
         team_id=team_id,
@@ -72,6 +73,7 @@ async def create_campaign(
             template_id=step_data.template_id,
             delay_days=step_data.delay_days,
             condition=step_data.condition,
+            attachment_ids=[str(a) for a in step_data.attachment_ids] or None,
         )
         db.add(step)
 

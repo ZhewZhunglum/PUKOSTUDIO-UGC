@@ -191,6 +191,7 @@ export interface CampaignStep {
     requires_reply?: boolean;
     skip_if_bounced?: boolean;
   } | null;
+  attachment_ids: string[];
 }
 
 export interface Campaign {
@@ -266,6 +267,7 @@ export interface ClientCampaignStep {
     skip_if_bounced?: boolean;
     ab_subject_b?: string;
   } | null;
+  attachment_ids: string[];
 }
 
 export interface ClientCampaign {

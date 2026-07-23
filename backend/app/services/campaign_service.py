@@ -14,6 +14,7 @@ from app.models.campaign import (
     CampaignStep,
     CampaignType,
 )
+from app.models.email_attachment import EmailAttachment
 from app.models.email_message import EmailDirection, EmailMessage, EmailStatus
 from app.models.influencer import Influencer
 from app.schemas.campaign import CampaignCreate, CampaignUpdate
@@ -46,6 +47,10 @@ async def get_campaign(
 
 
 MAX_CAMPAIGN_STEPS = 5
+# ESPs commonly reject (or silently drop) mail well before 25MB; keep enough
+# headroom under that for the base64-inflated MIME size of the attachments
+# themselves plus the HTML body.
+MAX_STEP_ATTACHMENT_BYTES = 15 * 1024 * 1024
 
 
 def _validate_steps(steps: list) -> None:
@@ -66,10 +71,47 @@ def _validate_steps(steps: list) -> None:
             raise BadRequestException("跟进步骤的延迟至少为 1 天")
 
 
+async def _validate_step_attachments(
+    db: AsyncSession, team_id: uuid.UUID, steps: list
+) -> None:
+    """Reject a step whose combined attachment size risks provider rejection.
+
+    One query covers every attachment referenced across all steps instead of
+    one query per step.
+    """
+    all_ids = {aid for step in steps for aid in (step.attachment_ids or [])}
+    if not all_ids:
+        return
+    result = await db.execute(
+        select(EmailAttachment.id, EmailAttachment.size_bytes).where(
+            EmailAttachment.id.in_(all_ids), EmailAttachment.team_id == team_id
+        )
+    )
+    size_by_id = dict(result.all())
+    overflowing = _overflowing_step_orders(steps, size_by_id)
+    if overflowing:
+        raise BadRequestException(
+            f"步骤 {overflowing[0]} 的附件总大小超过 "
+            f"{MAX_STEP_ATTACHMENT_BYTES // (1024 * 1024)}MB 限制"
+        )
+
+
+def _overflowing_step_orders(steps: list, size_by_id: dict) -> list[int]:
+    """Pure sizing check (no I/O) — step_orders whose combined attachments
+    exceed the per-step cap, given a precomputed id->size_bytes map."""
+    overflowing = []
+    for step in steps:
+        total = sum(size_by_id.get(aid, 0) for aid in (step.attachment_ids or []))
+        if total > MAX_STEP_ATTACHMENT_BYTES:
+            overflowing.append(step.step_order)
+    return overflowing
+
+
 async def create_campaign(
     db: AsyncSession, team_id: uuid.UUID, data: CampaignCreate
 ) -> Campaign:
     _validate_steps(data.steps)
+    await _validate_step_attachments(db, team_id, data.steps)
 
     campaign = Campaign(
         team_id=team_id,
@@ -91,6 +133,7 @@ async def create_campaign(
             template_id=step_data.template_id,
             delay_days=step_data.delay_days,
             condition=step_data.condition,
+            attachment_ids=[str(a) for a in step_data.attachment_ids] or None,
         )
         db.add(step)
 

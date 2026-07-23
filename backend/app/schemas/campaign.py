@@ -10,6 +10,7 @@ class CampaignStepCreate(BaseModel):
     template_id: uuid.UUID
     delay_days: int = 0
     condition: dict | None = None
+    attachment_ids: list[uuid.UUID] = []
 
 
 class CampaignStepResponse(BaseModel):
@@ -19,6 +20,7 @@ class CampaignStepResponse(BaseModel):
     template_id: uuid.UUID
     delay_days: int
     condition: dict | None
+    attachment_ids: list[uuid.UUID] = []
 
     model_config = {"from_attributes": True}
 

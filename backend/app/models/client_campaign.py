@@ -64,6 +64,7 @@ class ClientCampaignStep(BaseModel):
     )
     delay_days: Mapped[int] = mapped_column(Integer, default=0)
     condition: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    attachment_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     campaign: Mapped[ClientCampaign] = relationship("ClientCampaign", back_populates="steps")
 

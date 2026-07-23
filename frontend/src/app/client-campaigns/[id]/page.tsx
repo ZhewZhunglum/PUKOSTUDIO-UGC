@@ -354,6 +354,9 @@ export default function ClientCampaignDetailPage() {
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
                     模板 ID：{step.template_id}
+                    {step.attachment_ids.length > 0 && (
+                      <> · 附件 {step.attachment_ids.length} 个</>
+                    )}
                   </div>
                 </div>
               ))

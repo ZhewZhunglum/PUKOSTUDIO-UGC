@@ -6,6 +6,7 @@ import uuid
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.exceptions import BadRequestException, NotFoundException
@@ -136,18 +137,34 @@ def load_attachment_payload(attachment: EmailAttachment) -> dict:
     }
 
 
+def _attachment_ids_query(team_id: uuid.UUID, attachment_ids: list[uuid.UUID]):
+    """Team-scoped id-list SELECT, shared by the async and sync fetch paths so
+    there's exactly one filter to test and keep in sync."""
+    return select(EmailAttachment).where(
+        EmailAttachment.id.in_(attachment_ids),
+        EmailAttachment.team_id == team_id,
+    )
+
+
 async def attachment_payloads_for_ids(
     db: AsyncSession, team_id: uuid.UUID, attachment_ids: list[uuid.UUID]
 ) -> tuple[list[dict], list[EmailAttachment]]:
     """Team-scoped batch load. Returns (sender payloads, attachment rows)."""
     if not attachment_ids:
         return [], []
-    result = await db.execute(
-        select(EmailAttachment).where(
-            EmailAttachment.id.in_(attachment_ids),
-            EmailAttachment.team_id == team_id,
-        )
-    )
+    result = await db.execute(_attachment_ids_query(team_id, attachment_ids))
     rows = list(result.scalars().all())
     payloads = [load_attachment_payload(a) for a in rows]
     return payloads, rows
+
+
+def attachment_payloads_for_ids_sync(
+    db: Session, team_id: uuid.UUID, attachment_ids: list[uuid.UUID]
+) -> list[dict]:
+    """Sync-session twin of ``attachment_payloads_for_ids``, for Celery workers
+    (``email_tasks.py``/``client_email_tasks.py`` use a sync ``Session``, not
+    an ``AsyncSession``). Same team-scoped filter, same payload shape."""
+    if not attachment_ids:
+        return []
+    rows = db.execute(_attachment_ids_query(team_id, attachment_ids)).scalars().all()
+    return [load_attachment_payload(a) for a in rows]

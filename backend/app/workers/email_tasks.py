@@ -171,6 +171,7 @@ def send_single_email(
     from app.models.suppression import EmailSuppression, SuppressionReason
     from app.models.template import EmailTemplate
     from app.services import suppression_service
+    from app.services.attachment_service import attachment_payloads_for_ids_sync
     from app.services.sending_rules import choose_ab_subject
     from app.services.template_service import build_influencer_variables, render_template
 
@@ -373,6 +374,12 @@ def send_single_email(
         # pre-inline (rendering-only transform, no semantic content change).
         final_body = finalize_html_for_send(final_body)
 
+        # Load the step's configured attachments, if any (team-scoped; ids the
+        # team no longer owns are silently skipped, matching the reply-send path).
+        attachment_payloads = attachment_payloads_for_ids_sync(
+            db, uuid.UUID(team_id), [uuid.UUID(a) for a in (step.attachment_ids or [])]
+        )
+
         # Send via provider with RFC 8058 one-click unsubscribe headers —
         # mailbox providers weigh these heavily for bulk-sender reputation.
         sender = get_email_sender(account)
@@ -384,6 +391,7 @@ def send_single_email(
                 html_body=final_body,
                 text_body=signed_text,
                 headers=unsubscribe_headers(settings.base_url, str(message.id)),
+                attachments=attachment_payloads or None,
             )
         )
 

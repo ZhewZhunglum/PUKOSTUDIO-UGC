@@ -170,6 +170,7 @@ def send_single_client_email(
     from app.models.suppression import EmailSuppression, SuppressionReason
     from app.models.template import EmailTemplate
     from app.services import suppression_service
+    from app.services.attachment_service import attachment_payloads_for_ids_sync
     from app.services.sending_rules import choose_ab_subject
     from app.services.template_service import build_client_variables, render_template
 
@@ -345,6 +346,10 @@ def send_single_client_email(
         )
         final_body = finalize_html_for_send(final_body)
 
+        attachment_payloads = attachment_payloads_for_ids_sync(
+            db, uuid.UUID(team_id), [uuid.UUID(a) for a in (step.attachment_ids or [])]
+        )
+
         sender = get_email_sender(account)
         message_id = asyncio.run(
             sender.send(
@@ -356,6 +361,7 @@ def send_single_client_email(
                 headers=unsubscribe_headers(
                     settings.base_url, str(message.id), track_path=_TRACK_PATH
                 ),
+                attachments=attachment_payloads or None,
             )
         )
 
