@@ -8,6 +8,14 @@
       "port": 4317,
       "cwd": "frontend",
       "autoPort": false
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "C:\\Users\\Peter\\Desktop\\studio\\PUKOSTUDIO-UGC\\backend\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--reload", "--port", "8917"],
+      "port": 8917,
+      "cwd": "backend",
+      "autoPort": false
     }
   ]
 }

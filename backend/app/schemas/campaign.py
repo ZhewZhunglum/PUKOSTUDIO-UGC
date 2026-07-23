@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class CampaignStepCreate(BaseModel):
@@ -23,6 +23,13 @@ class CampaignStepResponse(BaseModel):
     attachment_ids: list[uuid.UUID] = []
 
     model_config = {"from_attributes": True}
+
+    @field_validator("attachment_ids", mode="before")
+    @classmethod
+    def _default_attachment_ids(cls, v):
+        # Steps created before the attachment_ids column existed have NULL
+        # in the DB rather than an empty JSONB array.
+        return v or []
 
 
 class CampaignCreate(BaseModel):
