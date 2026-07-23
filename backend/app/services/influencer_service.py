@@ -2,10 +2,11 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import asc, delete, desc, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
 from app.core.import_mapping import normalize_import_row
 from app.core.pagination import PaginationParams, paginate
 from app.integrations.woto import WotoAPIError, WotoConfigurationError
@@ -239,6 +240,17 @@ async def update_influencer(
 async def delete_influencer(db: AsyncSession, influencer_id: uuid.UUID, team_id: uuid.UUID) -> None:
     influencer = await get_influencer(db, influencer_id, team_id)
     await db.delete(influencer)
+    try:
+        # Flush now, inside the request, so a foreign-key conflict (email
+        # history, conversations, AI drafts, campaign enrollments — none of
+        # which cascade-delete) surfaces as a 409 here rather than as an
+        # unhandled error during commit in get_db's teardown, after a 204
+        # has already been sent to the client.
+        await db.flush()
+    except IntegrityError as exc:
+        raise ConflictException(
+            detail="该达人存在关联的邮件记录/对话/活动数据，无法删除。"
+        ) from exc
 
 
 async def get_influencer_emails(
