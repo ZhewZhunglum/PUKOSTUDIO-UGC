@@ -214,6 +214,7 @@ export default function DashboardPage() {
   const metrics: { label: string; value: number | undefined; spark: number[]; suffix: string }[] = [
     { label: "已发送邮件", value: stats?.emails_sent, spark: recentDaily.map((d) => d.emails_sent), suffix: "" },
     { label: "打开率",     value: stats?.open_rate,   spark: recentDaily.map((d) => rate(d.emails_opened, d.emails_sent)),  suffix: "%" },
+    { label: "点击率",     value: stats?.click_rate,  spark: recentDaily.map((d) => rate(d.emails_clicked, d.emails_sent)), suffix: "%" },
     { label: "回复率",     value: stats?.reply_rate,  spark: recentDaily.map((d) => rate(d.emails_replied, d.emails_sent)), suffix: "%" },
     { label: "退信率",     value: stats?.bounce_rate, spark: recentDaily.map((d) => rate(d.emails_bounced, d.emails_sent)), suffix: "%" },
   ];
@@ -245,8 +246,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* 4-metric stat card */}
-        <div className="ds-card" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 20 }}>
+        {/* 5-metric stat card */}
+        <div className="ds-card" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 20 }}>
           {metrics.map((m, i, arr) => (
             <div key={m.label} className="ds-stat" style={{ borderRight: i < arr.length - 1 ? "1px solid var(--hairline)" : 0 }}>
               <div className="ds-stat-label">{m.label}</div>

@@ -184,6 +184,51 @@ def inject_tracking(html_body: str, message_id: str, base_url: str, track_path: 
     return html_body + pixel
 
 
+def rewrite_links_for_tracking(
+    html_body: str, message_id: str, base_url: str, track_path: str = "track"
+) -> str:
+    """Rewrite outbound <a href> targets to route through a click redirect.
+
+    A click is a much stronger "a human engaged" signal than the open pixel:
+    Apple Mail Privacy Protection (and other prefetching clients) fetch the
+    open pixel automatically at delivery time regardless of whether anyone
+    ever reads the mail, silently inflating open_rate. A click can't be
+    triggered that way, so it gives campaign_service a corroborating signal.
+
+    Call this BEFORE inject_unsubscribe, so the unsubscribe footer link
+    (added afterward) is never itself wrapped in a tracking redirect — no
+    special-casing needed to identify and skip it.
+
+    Best-effort: any parse failure returns the body unchanged rather than
+    risking a broken send over a tracking feature.
+    """
+    if "<a " not in html_body and "<a\n" not in html_body and "<a\t" not in html_body:
+        return html_body  # no links at all — skip the parse
+
+    from urllib.parse import quote
+
+    from lxml import html as lxml_html
+
+    try:
+        tree = lxml_html.fromstring(html_body)
+    except Exception as exc:
+        logger.warning("Skipping click-tracking rewrite for %s: %s", message_id, exc)
+        return html_body
+
+    changed = False
+    for anchor in tree.iter("a"):
+        href = anchor.get("href")
+        if not href or href.startswith(("mailto:", "tel:", "#")):
+            continue
+        redirect = f"{base_url}/api/v1/{track_path}/click/{message_id}?url={quote(href, safe='')}"
+        anchor.set("href", redirect)
+        changed = True
+
+    if not changed:
+        return html_body
+    return lxml_html.tostring(tree, encoding="unicode")
+
+
 def finalize_html_for_send(html: str) -> str:
     """Inline CSS (style blocks / classes) into element style= attributes.
 
